@@ -19,8 +19,12 @@ static SoapySDR::KwargsList findBirria(const SoapySDR::Kwargs &args)
         SoapySDR::Kwargs entry;
         entry["driver"] = "birria";
         entry["index"] = std::to_string(i);
-        entry["label"] = std::string(info.name) + " :: bus " + std::to_string(info.bus) +
-                         " addr " + std::to_string(info.address);
+        // One device: a stable name, so SDR++ keeps its settings across re-enumeration.
+        if (count == 1)
+            entry["label"] = info.name;
+        else
+            entry["label"] = std::string(info.name) + " :: bus " + std::to_string(info.bus) +
+                             " addr " + std::to_string(info.address);
         char usbid[16];
         snprintf(usbid, sizeof(usbid), "%04x:%04x", info.vid, info.pid);
         entry["usb_id"] = usbid;
