@@ -400,6 +400,7 @@ void SoapyBirria::onSamples(const int16_t *iq, uint32_t count)
         return; /* an empty chunk would read as a gap, and a failure ends the stream */
     std::lock_guard<std::mutex> lock(mutex_);
     if (queued_ + count > kMaxQueuedSamples) {
+        droppedSamples_ += count;
         markGap(); /* the application is not keeping up, so drop these samples */
         return;
     }
@@ -415,8 +416,27 @@ void SoapyBirria::onGap()
 {
     if (callbackFailed_)
         return;
+    ++deviceGaps_;
     std::lock_guard<std::mutex> lock(mutex_);
     markGap();
+}
+
+/* Gaps are otherwise silent: a consumer sees only OVERFLOW. Say which side lost
+ * the samples, the device or this queue, so a slow application is visible.
+ */
+void SoapyBirria::reportLosses()
+{
+    const auto now = std::chrono::steady_clock::now();
+    if (now - lastReport_ < std::chrono::seconds(5))
+        return;
+    lastReport_ = now;
+    const uint32_t gaps = deviceGaps_.exchange(0);
+    const uint64_t dropped = droppedSamples_.exchange(0);
+    if (gaps || dropped)
+        SoapySDR::logf(SOAPY_SDR_WARNING,
+                       "birria: %u device gaps, %llu samples dropped because the application "
+                       "read too slowly",
+                       gaps, (unsigned long long)dropped);
 }
 
 /* Queue a gap marker unless one is already last, so markers stay bounded by
@@ -552,6 +572,7 @@ int SoapyBirria::readStream(SoapySDR::Stream *, void *const *buffs, const size_t
         std::lock_guard<std::mutex> reading(readerMutex_);
         if (restarting_)
             continue;
+        reportLosses();
         bool interrupted = false;
         const int result = readLocked(buffs, numElems, deadline, interrupted);
         if (!interrupted)

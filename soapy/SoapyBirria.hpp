@@ -119,6 +119,12 @@ private:
 
     std::vector<int16_t> current_; /* chunk being read, owned by the reader */
     size_t offset_ = 0;            /* complex samples already read from current_ */
+
+    /* Losses since the last report, logged by the reader at most every few seconds */
+    void reportLosses();
+    std::atomic<uint32_t> deviceGaps_{0};
+    std::atomic<uint64_t> droppedSamples_{0};
+    std::chrono::steady_clock::time_point lastReport_{};
 };
 
 #endif
