@@ -32,7 +32,10 @@
  * WFSYS reset does not reliably clear the analog overrides. mt_reset() must
  * call mt_restore_gain() BEFORE resetting; otherwise the next capture can
  * inherit forced gain and fail baseline validation. Keep the saved baseline
- * after a restore failure so later cleanup can retry it.
+ * after a restore failure so later cleanup can retry it. A process that dies
+ * mid-capture cannot restore; its analog override is the one field the reset
+ * leaves, and every fresh boot reads 0 there, so a capture that finds only that
+ * clears it and goes on.
  *
  * Automatic/released mode means leaving the initialized baseline unforced.
  * It does not prove full AGC operation or that manual mode freezes every gain
@@ -126,6 +129,11 @@ int mt_apply_gain(birriasdr_dev_t *dev)
     BS_TRY(gain_values(&dev->gain, values));
     BS_TRY(gain_snapshot(dev, before));
     BS_TRY(bs_read32(dev, BS_MMIO, 0x830000d0, &coarse));
+    if ((before[3] & 0x80000000) && !(before[0] & 7) && !(before[2] & 0x80000000) &&
+        !(coarse & (1u << 27))) {
+        BS_TRY(gain_write(dev, 3, 0));
+        BS_TRY(gain_snapshot(dev, before));
+    }
     if ((before[0] & 7) || (before[2] & 0x80000000) ||
         (before[3] & 0x80000000) || (coarse & (1u << 27)))
         return BIRRIASDR_ERROR_STATE;
