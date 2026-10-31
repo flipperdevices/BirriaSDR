@@ -86,6 +86,7 @@ struct arguments {
     uint64_t frequency, rate, limit;
     const char *output;
     bool manual;
+    struct birriasdr_gain gain;
 };
 
 /* Parse [--frequency Hz] [--rate SPS] output.cs16 [complex-samples [manual]].
@@ -114,9 +115,15 @@ static int parse_arguments(int argc, char **argv, struct arguments *arguments)
     if (argc - argument >= 2 && parse_number(argv[argument + 1], &arguments->limit))
         return -1;
     if (argc - argument == 3) {
-        if (strcmp(argv[argument + 2], "manual"))
+        unsigned lna = 2, lpf = 8, digital = 0;
+        const char *mode = argv[argument + 2];
+        if (strcmp(mode, "manual") &&
+            sscanf(mode, "manual:%u,%u,%u", &lna, &lpf, &digital) != 3)
             return -1;
         arguments->manual = true;
+        arguments->gain.lna = (uint8_t)lna;
+        arguments->gain.lpf = (uint8_t)lpf;
+        arguments->gain.digital = (uint8_t)digital;
     }
     return 0;
 }
@@ -166,17 +173,16 @@ int main(int argc, char **argv)
             return 1;
         }
     }
-    recorder.file = fopen(arguments.output, "wbx");
+    recorder.file = strcmp(arguments.output, "-") ? fopen(arguments.output, "wbx") : stdout;
     if (!recorder.file) {
         perror("Output (must not already exist)");
         birriasdr_close(dev);
         return 1;
     }
     if (arguments.manual) {
-        const struct birriasdr_gain gain = {2, 8, 0};
         result = birriasdr_set_tuner_gain_mode(dev, 1);
         if (!result)
-            result = birriasdr_set_gain_codes(dev, &gain);
+            result = birriasdr_set_gain_codes(dev, &arguments.gain);
     }
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);
