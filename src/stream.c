@@ -374,8 +374,8 @@ static bool announce_restart(struct delivery *delivery, uint32_t attempt, int er
  * require full recovery instead boot with a fresh nonce and committed settings.
  * Delivered offsets remain cumulative across both kinds of discontinuity.
  */
-int bs_stream(birriasdr_dev_t *dev, birriasdr_read_async_cb_t callback,
-               void *context, uint32_t depth, uint32_t buffer_samples, uint32_t packets)
+static int stream_pinned(birriasdr_dev_t *dev, birriasdr_read_async_cb_t callback,
+                         void *context, uint32_t depth, uint32_t buffer_samples, uint32_t packets)
 {
     struct delivery delivery = {0};
     uint64_t total_packets = 0, total_bytes = 0;
@@ -434,5 +434,17 @@ int bs_stream(birriasdr_dev_t *dev, birriasdr_read_async_cb_t callback,
     dev->stream_continuous = false;
     atomic_store(&dev->run_state, BS_IDLE);
     pthread_mutex_unlock(&dev->control_mutex);
+    return result;
+}
+
+/* The caller's thread runs the stream, so it is pinned for the stream only. */
+int bs_stream(birriasdr_dev_t *dev, birriasdr_read_async_cb_t callback,
+               void *context, uint32_t depth, uint32_t buffer_samples, uint32_t packets)
+{
+    if (!dev)
+        return BIRRIASDR_ERROR_INVALID;
+    void *saved = bs_pin_caller(dev);
+    const int result = stream_pinned(dev, callback, context, depth, buffer_samples, packets);
+    bs_restore_caller(saved);
     return result;
 }

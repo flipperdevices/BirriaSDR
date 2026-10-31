@@ -227,6 +227,29 @@ uint32_t birriasdr_get_sample_rate(const birriasdr_dev_t *dev)
     return dev ? dev->rate : 0;
 }
 
+/* Applied when the library's threads start, at the next read. */
+int birriasdr_set_cpus(birriasdr_dev_t *dev, const char *list)
+{
+    BS_TRY(require_idle(dev));
+    if (!list) {
+        dev->cpus_set = false;
+        return 0;
+    }
+    if (strlen(list) >= sizeof(dev->cpus) || bs_parse_cpus(list, NULL))
+        return BIRRIASDR_ERROR_INVALID;
+    strcpy(dev->cpus, list);
+    dev->cpus_set = true;
+    return 0;
+}
+
+const char *birriasdr_get_cpus(const birriasdr_dev_t *dev)
+{
+    const char *env = getenv("BIRRIA_CPUS");
+    if (!dev)
+        return "";
+    return dev->cpus_set ? dev->cpus : env ? env : "";
+}
+
 /* The caller holds control_mutex across validation, the complete hardware
  * transaction and the settings commit. Startup/stop/status/reset use the same
  * mutex, so even an RF-SPI read/modify/write cannot straddle a device reset.

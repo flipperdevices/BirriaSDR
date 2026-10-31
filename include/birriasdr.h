@@ -223,6 +223,16 @@ int birriasdr_set_sample_rate(birriasdr_dev_t *dev, uint32_t samples_per_second)
 /** Return the nominal configured complex sample rate, or 0 for NULL. */
 uint32_t birriasdr_get_sample_rate(const birriasdr_dev_t *dev);
 
+/** The CPUs the library's threads run on, and a read's calling thread until the
+ * read returns, from the next read: a list such as "4-7" or "0,2", "" to leave
+ * them unpinned, or NULL for the BIRRIA_CPUS environment variable. Pinning
+ * applies on Linux only. Idle handles only.
+ */
+int birriasdr_set_cpus(birriasdr_dev_t *dev, const char *list);
+
+/** The CPU list in effect, from the setting or BIRRIA_CPUS; "" when unpinned. */
+const char *birriasdr_get_cpus(const birriasdr_dev_t *dev);
+
 /** Set gain mode: 1 forces the documented gain indices, 0 releases overrides.
  * Releasing overrides is not a claim of complete closed-loop AGC control.
  * While idle, settings apply at the next read. With CAP_LIVE_GAIN, a running

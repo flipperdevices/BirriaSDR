@@ -85,6 +85,8 @@ struct birriasdr_dev {
     uint32_t recovery_limit;
     atomic_uint_fast64_t frequency;
     uint32_t rate;
+    char cpus[64];       /* CPU list for the library's threads, when cpus_set */
+    bool cpus_set;       /* else BIRRIA_CPUS applies */
     bool manual;
     struct birriasdr_gain gain;
     uint32_t nonce;
@@ -138,6 +140,10 @@ int bs_poll32(birriasdr_dev_t *dev, enum bs_space space, uint32_t address,
               uint32_t mask, uint32_t expected, unsigned timeout_ms);
 uint64_t bs_now_ns(void);
 void bs_sleep_us(unsigned microseconds);
+int bs_parse_cpus(const char *list, void *cpu_set);
+void bs_pin_thread(const birriasdr_dev_t *dev);
+void *bs_pin_caller(const birriasdr_dev_t *dev);
+void bs_restore_caller(void *saved);
 uint32_t bs_get_le32(const uint8_t *bytes);
 void bs_put_le32(uint8_t *bytes, uint32_t value);
 void bs_put_le16(uint8_t *bytes, uint16_t value);

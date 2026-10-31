@@ -277,6 +277,18 @@ static void test_api(void)
     CHECK(birriasdr_set_sample_rate(&dev, 0) == BIRRIASDR_ERROR_UNSUPPORTED);
     CHECK(birriasdr_set_sample_rate(&dev, 5000000) == BIRRIASDR_ERROR_UNSUPPORTED);
     CHECK(birriasdr_set_sample_rate(&dev, 10000000) == 0);
+    /* CPU settings: explicit values win, the environment fills in. */
+    unsetenv("BIRRIA_CPUS");
+    CHECK(!strcmp(birriasdr_get_cpus(&dev), ""));
+    setenv("BIRRIA_CPUS", "4-7", 1);
+    CHECK(!strcmp(birriasdr_get_cpus(&dev), "4-7"));
+    for (const char *bad = "x\0" "4-\0" "7-4\0" "4,,5\0" "1024\0"; *bad; bad += strlen(bad) + 1)
+        CHECK(birriasdr_set_cpus(&dev, bad) == BIRRIASDR_ERROR_INVALID);
+    CHECK(!strcmp(birriasdr_get_cpus(&dev), "4-7"));
+    CHECK(birriasdr_set_cpus(&dev, "0,2-3") == 0 && !strcmp(birriasdr_get_cpus(&dev), "0,2-3"));
+    CHECK(birriasdr_set_cpus(&dev, "") == 0 && !strcmp(birriasdr_get_cpus(&dev), ""));
+    CHECK(birriasdr_set_cpus(&dev, NULL) == 0 && !strcmp(birriasdr_get_cpus(&dev), "4-7"));
+    unsetenv("BIRRIA_CPUS");
     CHECK(birriasdr_set_sample_rate(&dev, 60000000) == BIRRIASDR_ERROR_UNSUPPORTED);
     CHECK(birriasdr_set_sample_rate(&dev, 20000000) == 0);
     CHECK(birriasdr_get_sample_rate(&dev) == 20000000);

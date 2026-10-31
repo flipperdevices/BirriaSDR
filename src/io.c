@@ -1,9 +1,94 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 Luigi C.
  */
+#define _GNU_SOURCE
 #include "internal.h"
 #include <errno.h>
+#include <stdlib.h>
 #include <time.h>
+#ifdef __linux__
+#include <sched.h>
+#endif
+
+/* Parse a CPU list such as "4-7", "4,6" or a mix into cpu_set, a cpu_set_t on
+ * Linux, or only check it when cpu_set is NULL. Empty is valid and selects none.
+ */
+int bs_parse_cpus(const char *list, void *cpu_set)
+{
+#ifdef __linux__
+    cpu_set_t *set = cpu_set;
+    if (set)
+        CPU_ZERO(set);
+#else
+    (void)cpu_set;
+#endif
+    while (*list) {
+        char *end;
+        long first = strtol(list, &end, 10), last;
+        if (end == list || first < 0 || first >= 1024)
+            return BIRRIASDR_ERROR_INVALID;
+        last = first;
+        if (*end == '-') {
+            list = end + 1;
+            last = strtol(list, &end, 10);
+            if (end == list || last < first || last >= 1024)
+                return BIRRIASDR_ERROR_INVALID;
+        }
+#ifdef __linux__
+        for (long cpu = first; set && cpu <= last && cpu < CPU_SETSIZE; ++cpu)
+            CPU_SET((int)cpu, set);
+#endif
+        if (*end != ',' && *end)
+            return BIRRIASDR_ERROR_INVALID;
+        list = *end ? end + 1 : end;
+    }
+    return 0;
+}
+
+/* Pin the calling thread to the device's CPU list, else BIRRIA_CPUS's, if any.
+ * The USB event thread calls it, and a stream's caller through bs_pin_caller,
+ * so the host application keeps its other threads wherever its scheduler puts them.
+ */
+void bs_pin_thread(const birriasdr_dev_t *dev)
+{
+#ifdef __linux__
+    const char *list = dev->cpus_set ? dev->cpus : getenv("BIRRIA_CPUS");
+    cpu_set_t set;
+    if (!list || !*list || bs_parse_cpus(list, &set) || !CPU_COUNT(&set))
+        return;
+    sched_setaffinity(0, sizeof(set), &set);
+#else
+    (void)dev;
+#endif
+}
+
+/* Pin the calling thread for a stream and return its previous CPU set, for
+ * bs_restore_caller, or NULL when there is nothing to restore.
+ */
+void *bs_pin_caller(const birriasdr_dev_t *dev)
+{
+#ifdef __linux__
+    cpu_set_t *saved = malloc(sizeof(*saved));
+    if (saved && sched_getaffinity(0, sizeof(*saved), saved)) {
+        free(saved);
+        saved = NULL;
+    }
+    bs_pin_thread(dev);
+    return saved;
+#else
+    (void)dev;
+    return NULL;
+#endif
+}
+
+void bs_restore_caller(void *saved)
+{
+#ifdef __linux__
+    if (saved)
+        sched_setaffinity(0, sizeof(cpu_set_t), saved);
+#endif
+    free(saved);
+}
 
 /* Explicit byte assembly keeps protocol access safe on unaligned/big-endian hosts. */
 uint32_t bs_get_le32(const uint8_t *p)

@@ -137,6 +137,7 @@ static void resume_transfers(struct bs_reader *reader)
 static void *pump_events(void *context)
 {
     struct bs_reader *reader = context;
+    bs_pin_thread(reader->dev);
     for (;;) {
         bool done;
         int result;
