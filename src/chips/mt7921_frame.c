@@ -126,38 +126,61 @@ int bs_framer_finish(const struct bs_framer *framer, uint64_t expected)
     return framer->used || framer->packets != expected ? BIRRIASDR_ERROR_PROTOCOL : 0;
 }
 
+/* One raw word, little-endian, in a form the compiler vectorizes: a plain load on
+ * little-endian hosts, where a call to bs_get_le32 per word cost a third of the stream.
+ */
+static inline uint32_t load_le32(const uint8_t *p)
+{
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    uint32_t word;
+    memcpy(&word, p, sizeof(word));
+    return word;
+#else
+    return bs_get_le32(p);
+#endif
+}
+
 /* Raw SRAM is little-endian Q then I, 14-bit two's-complement in 16-bit slots.
  * Sign-extend and reorder to conventional native-endian I,Q without rescaling.
- * Validate the entire packet before making any part of it visible to a caller.
+ * One pass converts and collects the reserved bits; output written before a
+ * failure is past what any caller has been given, so a bad packet stays invisible.
  */
 int bs_decode_iq(const uint8_t *raw, int16_t *iq, size_t samples)
 {
-    for (size_t n = 0; n < samples; ++n)
-        if (bs_get_le32(raw + n * 4) & 0xc000c000u)
-            return BIRRIASDR_ERROR_PROTOCOL;
+    uint32_t reserved = 0;
     for (size_t n = 0; n < samples; ++n) {
-        uint32_t word = bs_get_le32(raw + n * 4);
-        iq[n * 2] = (int16_t)((int32_t)(((word >> 16) & 0x3fff) ^ 0x2000) - 0x2000);
-        iq[n * 2 + 1] = (int16_t)((int32_t)((word & 0x3fff) ^ 0x2000) - 0x2000);
+        uint32_t word = load_le32(raw + n * 4);
+        reserved |= word;
+        iq[n * 2] = (int16_t)((int32_t)(word << 2) >> 18);
+        iq[n * 2 + 1] = (int16_t)((int32_t)(word << 18) >> 18);
     }
-    return 0;
+    return reserved & 0xc000c000u ? BIRRIASDR_ERROR_PROTOCOL : 0;
+}
+
+static inline void decode_pair(uint32_t a, uint32_t b, int16_t *iq)
+{
+    iq[0] = (int16_t)((int32_t)(a << 2) >> 18);
+    iq[1] = (int16_t)((int32_t)(a << 18) >> 18);
+    iq[2] = (int16_t)((int32_t)(b << 2) >> 18);
+    iq[3] = (int16_t)((int32_t)(b << 18) >> 18);
 }
 
 /* The packer used at 10 and 20 MSps (0x800210b8[17]) writes records of four
  * words: two consecutive output samples, then two zero words. Each output
  * sample is every fourth tap sample, so one record covers eight tap samples.
  * Keep the samples, require zero padding, and validate the whole packet before
- * writing any output.
+ * any caller is given its output.
  */
 int bs_decode_iq_halved(const uint8_t *raw, int16_t *iq, size_t words)
 {
+    uint32_t reserved = 0, padding = 0;
     if (words % 4)
         return BIRRIASDR_ERROR_INVALID;
-    for (size_t n = 0; n < words; n += 4)
-        if (bs_get_le32(raw + n * 4 + 8) || bs_get_le32(raw + n * 4 + 12) ||
-            ((bs_get_le32(raw + n * 4) | bs_get_le32(raw + n * 4 + 4)) & 0xc000c000u))
-            return BIRRIASDR_ERROR_PROTOCOL;
-    for (size_t n = 0; n < words; n += 4)
-        BS_TRY(bs_decode_iq(raw + n * 4, iq + n, 2));
-    return 0;
+    for (size_t n = 0; n < words; n += 4) {
+        uint32_t a = load_le32(raw + n * 4), b = load_le32(raw + n * 4 + 4);
+        padding |= load_le32(raw + n * 4 + 8) | load_le32(raw + n * 4 + 12);
+        reserved |= a | b;
+        decode_pair(a, b, iq + n);
+    }
+    return padding || (reserved & 0xc000c000u) ? BIRRIASDR_ERROR_PROTOCOL : 0;
 }
