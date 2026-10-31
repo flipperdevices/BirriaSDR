@@ -608,8 +608,12 @@ int SoapyBirria::readLocked(void *const *buffs, const size_t numElems,
                     interrupted = true;
                     return 0;
                 }
-                if (queue_.empty())
+                /* The read has ended. Report it after the timeout, so a caller
+                 * that retries at once does not spin on the error. */
+                if (queue_.empty()) {
+                    cond_.wait_until(lock, deadline, [this] { return restarting_ || !active_; });
                     return active_ ? SOAPY_SDR_STREAM_ERROR : SOAPY_SDR_TIMEOUT;
+                }
             }
             if (queue_.front().empty()) {
                 if (count > 0)
