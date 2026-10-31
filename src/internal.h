@@ -85,6 +85,7 @@ struct birriasdr_dev {
     uint32_t recovery_limit;
     atomic_uint_fast64_t frequency;
     uint32_t rate;
+    unsigned usb_burst;  /* endpoint burst to program; 0 for BIRRIA_BURST or the ROM's */
     char cpus[64];       /* CPU list for the library's threads, when cpus_set */
     bool cpus_set;       /* else BIRRIA_CPUS applies */
     bool manual;

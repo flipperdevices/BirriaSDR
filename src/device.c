@@ -227,6 +227,24 @@ uint32_t birriasdr_get_sample_rate(const birriasdr_dev_t *dev)
     return dev ? dev->rate : 0;
 }
 
+/* Programmed when a read starts, like the rate. */
+int birriasdr_set_usb_burst(birriasdr_dev_t *dev, unsigned burst)
+{
+    BS_TRY(require_idle(dev));
+    if (burst > 15)
+        return BIRRIASDR_ERROR_INVALID;
+    dev->usb_burst = burst;
+    return 0;
+}
+
+unsigned birriasdr_get_usb_burst(const birriasdr_dev_t *dev)
+{
+    const char *env = getenv("BIRRIA_BURST");
+    if (!dev)
+        return 0;
+    return dev->usb_burst ? dev->usb_burst : env ? (unsigned)strtoul(env, NULL, 0) & 0xf : 0;
+}
+
 /* Applied when the library's threads start, at the next read. */
 int birriasdr_set_cpus(birriasdr_dev_t *dev, const char *list)
 {

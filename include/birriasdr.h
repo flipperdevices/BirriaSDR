@@ -223,6 +223,16 @@ int birriasdr_set_sample_rate(birriasdr_dev_t *dev, uint32_t samples_per_second)
 /** Return the nominal configured complex sample rate, or 0 for NULL. */
 uint32_t birriasdr_get_sample_rate(const birriasdr_dev_t *dev);
 
+/** The USB endpoint burst the next read programs, 1 to 15, or 0 for the
+ * BIRRIA_BURST environment variable, else the ROM's setting. A burst above the
+ * ROM's takes effect only when the device's configuration descriptor advertises
+ * it, as mt7921-sdr-hold arranges on a Flipper One. Idle handles only.
+ */
+int birriasdr_set_usb_burst(birriasdr_dev_t *dev, unsigned burst);
+
+/** The burst the next read programs, from the setting or BIRRIA_BURST; 0 keeps the ROM's. */
+unsigned birriasdr_get_usb_burst(const birriasdr_dev_t *dev);
+
 /** The CPUs the library's threads run on, and a read's calling thread until the
  * read returns, from the next read: a list such as "4-7" or "0,2", "" to leave
  * them unpinned, or NULL for the BIRRIA_CPUS environment variable. Pinning

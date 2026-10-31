@@ -44,6 +44,7 @@
  * alone is insufficient. See docs/mt7921.md and mt7921_capture.c for the
  * handoff contract and mt7921_frame.c for the resulting event format.
  */
+#include <stdlib.h>
 #include "mt7921.h"
 #include "mt7921_image.h"
 #include <fcntl.h>
@@ -293,7 +294,16 @@ static int prepare_once(birriasdr_dev_t *dev, uint32_t packets)
     BS_TRY(bs_update32(dev, BS_MMIO, 0x74000018, 0xffff, (1u << 21) | (32u << 8) | 100));
     BS_TRY(bs_update32(dev, BS_MMIO, 0x7400000c, 0xff, 30));
     dev->stats.stage = BIRRIASDR_STAGE_RF;
-    return mt_configure_filter(dev);
+    BS_TRY(mt_configure_filter(dev));
+    /* Endpoint 4's SuperSpeed burst: the device's setting, else BIRRIA_BURST's. The
+     * ROM sets 1 on every enumeration; the host only uses more if the descriptor
+     * was patched to advertise it. */
+    unsigned burst = dev->usb_burst;
+    if (!burst && getenv("BIRRIA_BURST"))
+        burst = strtoul(getenv("BIRRIA_BURST"), NULL, 0) & 0xf;
+    if (burst)
+        BS_TRY(bs_update32(dev, BS_UHW, 0x74011144, 0xf, burst));
+    return 0;
 }
 
 /* Retry a transient startup failure once, from a complete USB/WFSYS reset.
