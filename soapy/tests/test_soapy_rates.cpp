@@ -99,6 +99,11 @@ int birriasdr_tuner_gain_codes(const birriasdr_dev_t *, int, struct birriasdr_ga
 {
     return BIRRIASDR_ERROR_UNSUPPORTED;
 }
+int birriasdr_get_dc_offset(const birriasdr_dev_t *, float *i, float *q)
+{
+    *i = *q = 0;
+    return 0;
+}
 int birriasdr_set_center_freq(birriasdr_dev_t *, uint64_t) { return 0; }
 uint64_t birriasdr_get_center_freq(const birriasdr_dev_t *) { return 2437000000u; }
 int birriasdr_get_tuning_band(const birriasdr_dev_t *, uint32_t, uint64_t *, uint64_t *)
@@ -148,6 +153,11 @@ int main()
     static const double native[] = {10e6, 20e6, 40e6, 80e6};
     SoapySDR_setLogLevel(SOAPY_SDR_CRITICAL);
     SoapyBirria dev(0, {});
+
+    CHECK(dev.hasDCOffsetMode(SOAPY_SDR_RX, 0) && dev.getDCOffsetMode(SOAPY_SDR_RX, 0));
+    dev.setDCOffsetMode(SOAPY_SDR_RX, 0, false);
+    CHECK(!dev.getDCOffsetMode(SOAPY_SDR_RX, 0));
+    dev.setDCOffsetMode(SOAPY_SDR_RX, 0, true);
 
     const auto listed = dev.listSampleRates(SOAPY_SDR_RX, 0);
     CHECK(listed.size() == 4);

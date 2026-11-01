@@ -42,6 +42,9 @@ public:
     bool hasGainMode(const int direction, const size_t channel) const override;
     void setGainMode(const int direction, const size_t channel, const bool automatic) override;
     bool getGainMode(const int direction, const size_t channel) const override;
+    bool hasDCOffsetMode(const int direction, const size_t channel) const override;
+    void setDCOffsetMode(const int direction, const size_t channel, const bool automatic) override;
+    bool getDCOffsetMode(const int direction, const size_t channel) const override;
     void setGain(const int direction, const size_t channel, const std::string &name,
                  const double value) override;
     void setGain(const int direction, const size_t channel, const double value) override;
@@ -108,6 +111,7 @@ private:
     std::thread worker_;
     std::atomic<bool> active_{false};  /* between activateStream and deactivateStream */
     std::atomic<bool> running_{false}; /* the worker's library read has not returned */
+    std::atomic<bool> dcAuto_{true};   /* CF32 takes out the library's DC estimate */
     std::atomic<bool> callbackFailed_{false};
     std::atomic<bool> restarting_{false}; /* a rate change is restarting the read */
     /* Held by readStream() for its whole call. A rate change takes it, so it

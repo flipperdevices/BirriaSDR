@@ -178,6 +178,24 @@ void SoapyBirria::setGainMode(const int, const size_t, const bool automatic)
         report(birriasdr_set_gain_codes(dev_, &gain_), "set_gain_codes");
 }
 
+/* Automatic DC correction, on by default, applies to CF32: it subtracts the
+ * library's estimate of the digital gain stage's offset. CS16 is always raw.
+ */
+bool SoapyBirria::hasDCOffsetMode(const int direction, const size_t) const
+{
+    return direction == SOAPY_SDR_RX;
+}
+
+void SoapyBirria::setDCOffsetMode(const int, const size_t, const bool automatic)
+{
+    dcAuto_.store(automatic);
+}
+
+bool SoapyBirria::getDCOffsetMode(const int, const size_t) const
+{
+    return dcAuto_.load();
+}
+
 /* Report automatic mode unless the library confirms manual mode. */
 bool SoapyBirria::getGainMode(const int, const size_t) const
 {
@@ -403,7 +421,10 @@ std::vector<double> SoapyBirria::listSampleRates(const int, const size_t) const
     return std::vector<double>(std::begin(kNativeRates), std::end(kNativeRates));
 }
 
-/* The library delivers CS16. CF32 is a scaled copy. */
+/* The library delivers CS16. CF32 is a scaled copy, with the library's DC
+ * estimate, the digital gain stage's truncation, taken out while automatic DC
+ * correction is on.
+ */
 std::vector<std::string> SoapyBirria::getStreamFormats(const int, const size_t) const
 {
     return {SOAPY_SDR_CF32, SOAPY_SDR_CS16};
@@ -719,8 +740,13 @@ int SoapyBirria::readLocked(void *const *buffs, const size_t numElems,
         } else {
             constexpr float kScale = 1.0f / 8192.0f;
             float *out = static_cast<float *>(buffs[0]) + 2 * count;
-            for (size_t k = 0; k < 2 * n; ++k)
-                out[k] = in[k] * kScale;
+            float dc_i = 0, dc_q = 0;
+            if (dcAuto_.load())
+                birriasdr_get_dc_offset(dev_, &dc_i, &dc_q);
+            for (size_t k = 0; k < n; ++k) {
+                out[2 * k] = (in[2 * k] - dc_i) * kScale;
+                out[2 * k + 1] = (in[2 * k + 1] - dc_q) * kScale;
+            }
         }
         count += n;
         offset_ += n;

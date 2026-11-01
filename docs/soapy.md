@@ -11,7 +11,8 @@ converts samples to the requested format without resampling.
 | --- | --- |
 | Driver key | `driver=birria`. A dongle is selected by enumeration order with `index=N` |
 | Sample rates | 10, 20, 40 and 80 MSps, the native rates. The module does not resample, so an application that needs a lower rate decimates the stream itself |
-| Stream formats | `CS16` (native) and `CF32` |
+| Stream formats | `CS16` (native, raw) and `CF32` |
+| DC offset mode | Automatic (default) or off. Automatic takes the library's DC estimate (`birriasdr_get_dc_offset()`), the digital gain stage's truncation, out of `CF32`. `CS16` is always raw |
 | Frequency range | One range per band, from `birriasdr_get_tuning_band()`, so front ends do not offer the gap between bands. The bands match the frequency tuning row of the README [specifications](../README.md#specifications) |
 | Gains | `LNA`, `LPF` and `DIG` in dB from the library's measured table for the current band; a value snaps to the nearest step of its stage. The overall gain fills the LNA first, then `LPF`, then `DIG`, as `birriasdr_set_tuner_gain()` does. In a band without a table the elements are raw codes: `LNA` 0 to 5, `LPF` 0 to 8 and `DIG` 0 to 12 |
 | Gain mode | Automatic (the library default) or manual. Automatic mode runs the library's AGC, and the gain elements then show its current choice. Gains set in automatic mode are stored and sent once manual mode is selected. In manual mode a refused change keeps the previous code |
