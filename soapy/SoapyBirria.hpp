@@ -11,6 +11,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <functional>
 #include <mutex>
 #include <shared_mutex>
 #include <thread>
@@ -66,6 +67,9 @@ public:
     void setSampleRate(const int direction, const size_t channel, const double rate) override;
     double getSampleRate(const int direction, const size_t channel) const override;
     std::vector<double> listSampleRates(const int direction, const size_t channel) const override;
+    void setBandwidth(const int direction, const size_t channel, const double bandwidth) override;
+    double getBandwidth(const int direction, const size_t channel) const override;
+    std::vector<double> listBandwidths(const int direction, const size_t channel) const override;
 
     std::vector<std::string> getStreamFormats(const int direction,
                                               const size_t channel) const override;
@@ -91,6 +95,7 @@ private:
     int readLocked(void *const *buffs, size_t numElems,
                    std::chrono::steady_clock::time_point deadline, bool &interrupted);
     void commitGainLocked(const birriasdr_gain &next, bool manual);
+    void whileIdle(const std::function<void()> &change, const char *restartFailed);
     void markGap();
     void onCallbackFailure();
     int startWorker();

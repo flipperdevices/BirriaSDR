@@ -112,6 +112,24 @@ int birriasdr_set_freq_correction(birriasdr_dev_t *, int ppm)
     return 0;
 }
 int birriasdr_get_freq_correction(const birriasdr_dev_t *) { return stub_ppm; }
+static uint32_t stub_bandwidth;
+int birriasdr_set_tuner_bandwidth(birriasdr_dev_t *, uint32_t bandwidth)
+{
+    stub_bandwidth = bandwidth;
+    return 0;
+}
+uint32_t birriasdr_get_tuner_bandwidth(const birriasdr_dev_t *)
+{
+    return stub_bandwidth && stub_bandwidth <= 40000000 ? 40000000 : 80000000;
+}
+int birriasdr_get_tuner_bandwidths(const birriasdr_dev_t *, uint32_t *widths, size_t capacity)
+{
+    if (capacity >= 2) {
+        widths[0] = 40000000;
+        widths[1] = 80000000;
+    }
+    return 2;
+}
 uint64_t birriasdr_get_center_freq(const birriasdr_dev_t *) { return 2437000000u; }
 int birriasdr_get_tuning_band(const birriasdr_dev_t *, uint32_t, uint64_t *, uint64_t *)
 {
@@ -168,6 +186,11 @@ int main()
     CHECK(dev.hasFrequencyCorrection(SOAPY_SDR_RX, 0));
     dev.setFrequencyCorrection(SOAPY_SDR_RX, 0, -12.6);
     CHECK(stub_ppm == -13 && dev.getFrequencyCorrection(SOAPY_SDR_RX, 0) == -13);
+    CHECK(dev.listBandwidths(SOAPY_SDR_RX, 0).size() == 2);
+    dev.setBandwidth(SOAPY_SDR_RX, 0, 25e6);
+    CHECK(stub_bandwidth == 25000000 && dev.getBandwidth(SOAPY_SDR_RX, 0) == 40e6);
+    dev.setBandwidth(SOAPY_SDR_RX, 0, 0);
+    CHECK(stub_bandwidth == 0);
 
     const auto listed = dev.listSampleRates(SOAPY_SDR_RX, 0);
     CHECK(listed.size() == 4);

@@ -11,6 +11,7 @@ converts samples to the requested format without resampling.
 | --- | --- |
 | Driver key | `driver=birria`. A dongle is selected by enumeration order with `index=N` |
 | Sample rates | 10, 20, 40 and 80 MSps, the native rates. The module does not resample, so an application that needs a lower rate decimates the stream itself |
+| Bandwidth | The receive filters the current rate can use: 40 or 80 MHz at 80 MSps, 20 or 40 MHz at 40 MSps, and the span's own at 10 and 20 MSps. A request gets the smallest at least as wide; a running stream restarts, as for a rate change |
 | Frequency correction | In ppm, rounded to whole ppm, through `birriasdr_set_freq_correction()`. It retunes at once and does not correct the sample clock |
 | Stream formats | `CS16` (native, raw) and `CF32` |
 | DC offset mode | Automatic (default) or off. Automatic takes the library's DC estimate (`birriasdr_get_dc_offset()`), the digital gain stage's truncation, out of `CF32`. `CS16` is always raw |
@@ -27,7 +28,7 @@ rates. The next read returns `SOAPY_SDR_OVERFLOW`, and samples at the old rate
 are dropped. If the read cannot restart, later reads return
 `SOAPY_SDR_STREAM_ERROR`. A request within 1 Hz of a listed rate is set to
 exactly that rate, and any other rate is refused. The module has no hardware
-timestamps, no serial number, no bandwidth control and no sensors.
+timestamps, no serial number and no sensors.
 
 Errors from tuning, sample-rate changes and gain changes are logged, not
 thrown, because some front ends do not catch exceptions from these calls and

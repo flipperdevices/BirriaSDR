@@ -388,14 +388,23 @@ void SoapyBirria::setSampleRate(const int, const size_t, const double rate)
     }
     if (static_cast<uint32_t>(*native) == static_cast<uint32_t>(rate_))
         return;
-    /* The library changes the rate only while idle, so a running stream stops,
-     * changes rate and restarts. Wake a waiting read so it returns, then take
-     * the reader lock, so the change falls between two reads. Samples at the
-     * old rate are dropped, and the next read returns OVERFLOW. If the read
-     * cannot restart, the stream stays active with no worker, so reads return
-     * STREAM_ERROR after the overflow. An active stream whose read already
-     * ended restarts too, so queued old-rate samples never get the new rate.
-     */
+    whileIdle([this, native] {
+        if (report(birriasdr_set_sample_rate(dev_, static_cast<uint32_t>(*native)),
+                   "set_sample_rate"))
+            rate_ = birriasdr_get_sample_rate(dev_);
+    }, "birria: cannot restart the stream after a rate change");
+}
+
+/* With controlMutex_ held exclusively, make a change the library accepts only
+ * while idle. A running stream stops, changes and restarts: wake a waiting read
+ * so it returns, then take the reader lock, so the change falls between two
+ * reads. Samples from before are dropped, and the next read returns OVERFLOW.
+ * If the read cannot restart, the stream stays active with no worker, so reads
+ * return STREAM_ERROR after the overflow. An active stream whose read already
+ * ended restarts too, so queued old samples never pass for new ones.
+ */
+void SoapyBirria::whileIdle(const std::function<void()> &change, const char *restartFailed)
+{
     const bool restart = active_;
     std::unique_lock<std::mutex> reading(readerMutex_, std::defer_lock);
     if (restart) {
@@ -407,9 +416,7 @@ void SoapyBirria::setSampleRate(const int, const size_t, const double rate)
         reading.lock();
         stopWorker();
     }
-    if (report(birriasdr_set_sample_rate(dev_, static_cast<uint32_t>(*native)),
-               "set_sample_rate"))
-        rate_ = birriasdr_get_sample_rate(dev_);
+    change();
     if (!restart)
         return;
     current_.clear();
@@ -421,12 +428,44 @@ void SoapyBirria::setSampleRate(const int, const size_t, const double rate)
         markGap();
     }
     if (startWorker() != 0)
-        logError("birria: cannot restart the stream after a rate change");
+        logError(restartFailed);
     {
         std::lock_guard<std::mutex> lock(mutex_);
         restarting_ = false;
     }
     cond_.notify_all();
+}
+
+/* The receive filter: the library's smallest width for this rate at least the
+ * request. The filter is set up when a read starts, so a running stream
+ * restarts as for a rate change.
+ */
+void SoapyBirria::setBandwidth(const int, const size_t, const double bandwidth)
+{
+    std::unique_lock<std::shared_mutex> control(controlMutex_);
+    const uint32_t request = bandwidth <= 0 ? 0 : bandwidth >= 4e9 ? UINT32_MAX
+                                                 : static_cast<uint32_t>(std::lround(bandwidth));
+    whileIdle([this, request] {
+        report(birriasdr_set_tuner_bandwidth(dev_, request), "set_tuner_bandwidth");
+    }, "birria: cannot restart the stream after a bandwidth change");
+}
+
+double SoapyBirria::getBandwidth(const int, const size_t) const
+{
+    std::shared_lock<std::shared_mutex> control(controlMutex_);
+    return birriasdr_get_tuner_bandwidth(dev_);
+}
+
+/* The filter widths the current rate can use, from narrowest to the span. */
+std::vector<double> SoapyBirria::listBandwidths(const int, const size_t) const
+{
+    std::shared_lock<std::shared_mutex> control(controlMutex_);
+    uint32_t widths[8];
+    const int count = birriasdr_get_tuner_bandwidths(dev_, widths, 8);
+    std::vector<double> list;
+    for (int i = 0; i < count && i < 8; ++i)
+        list.push_back(widths[i]);
+    return list;
 }
 
 /* Return the rate last committed to the library, cached atomically so this
