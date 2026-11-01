@@ -101,6 +101,7 @@ struct birriasdr_dev {
     void *recovery_context;
     uint32_t recovery_limit;
     atomic_uint_fast64_t frequency;
+    int32_t ppm;
     uint32_t rate;
     unsigned usb_burst;  /* endpoint burst to program; 0 for BIRRIA_BURST or the ROM's */
     char cpus[64];       /* CPU list for the library's threads, when cpus_set */
@@ -173,6 +174,7 @@ struct bs_framer {
 #define BS_AGC_RISE_TICKS 5
 
 
+uint64_t bs_corrected_frequency(uint64_t frequency, int32_t ppm);
 const struct birriasdr_gain_table *bs_band_gain(const birriasdr_dev_t *dev);
 int bs_total_gain(const struct birriasdr_gain_table *table, const struct birriasdr_gain *gain);
 struct birriasdr_gain bs_pick_codes(const struct birriasdr_gain_table *table, int tenths_db,

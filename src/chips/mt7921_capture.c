@@ -195,7 +195,8 @@ const struct bs_backend bs_mt7921_backend = {
     .chipset = BIRRIASDR_CHIP_MT7921,
     .name = "MT7961/MT7972",
     .capabilities = BIRRIASDR_CAP_RX | BIRRIASDR_CAP_RAW_GAIN | BIRRIASDR_CAP_GAIN_DB |
-                    BIRRIASDR_CAP_AGC | BIRRIASDR_CAP_LIVE_GAIN | BIRRIASDR_CAP_TUNING | BIRRIASDR_CAP_LIVE_TUNING,
+                    BIRRIASDR_CAP_AGC | BIRRIASDR_CAP_LIVE_GAIN | BIRRIASDR_CAP_TUNING |
+                    BIRRIASDR_CAP_LIVE_TUNING | BIRRIASDR_CAP_FREQ_CORRECTION,
     .default_frequency = MT_RF_ANCHOR_HZ,
     .min_frequency = MT_RF_MIN_HZ, .max_frequency = MT_RF_5G_MAX_HZ,
     .bands = bands, .band_count = sizeof(bands) / sizeof(bands[0]),

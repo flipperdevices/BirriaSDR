@@ -430,6 +430,30 @@ static void test_agc_step(void)
     CHECK(far.target >= slow + 60);
 }
 
+/* A ppm correction programs center / (1 + ppm / 1e6), rounded, keeps the
+ * reported center, stays within +-1000 and needs the capability.
+ */
+static void test_freq_correction(void)
+{
+    birriasdr_dev_t dev = {0};
+    atomic_init(&dev.run_state, BS_IDLE);
+    CHECK(pthread_mutex_init(&dev.control_mutex, NULL) == 0);
+    dev.backend = &bs_mt7921_backend;
+    dev.frequency = UINT64_C(2437000000);
+    CHECK(bs_corrected_frequency(UINT64_C(2437000000), 0) == UINT64_C(2437000000));
+    CHECK(bs_corrected_frequency(UINT64_C(2437000000), 10) == UINT64_C(2436975630));
+    CHECK(bs_corrected_frequency(UINT64_C(5785000000), -20) == UINT64_C(5785115702));
+    CHECK(birriasdr_get_capabilities(&dev) & BIRRIASDR_CAP_FREQ_CORRECTION);
+    CHECK(birriasdr_set_freq_correction(&dev, 10) == 0 && birriasdr_get_freq_correction(&dev) == 10);
+    CHECK(birriasdr_get_center_freq(&dev) == UINT64_C(2437000000));
+    CHECK(birriasdr_set_freq_correction(&dev, 1001) == BIRRIASDR_ERROR_INVALID);
+    CHECK(birriasdr_set_freq_correction(&dev, -1001) == BIRRIASDR_ERROR_INVALID);
+    CHECK(birriasdr_get_freq_correction(&dev) == 10);
+    dev.backend = bs_lookup_id(0x0e8d, 0x7925)->backend;
+    CHECK(birriasdr_set_freq_correction(&dev, 5) == BIRRIASDR_ERROR_UNSUPPORTED);
+    CHECK(pthread_mutex_destroy(&dev.control_mutex) == 0);
+}
+
 /* Tests deliberately run without a dongle, root privileges or vendor firmware. */
 int main(void)
 {
@@ -443,6 +467,7 @@ int main(void)
     test_api();
     test_tuner_gain();
     test_agc_step();
+    test_freq_correction();
     puts("core tests passed");
     return 0;
 }

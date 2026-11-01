@@ -210,9 +210,9 @@ static int select_band(birriasdr_dev_t *dev, bool high)
 /* Preserve routing around a complete selected-oscillator calibration. The
  * caller owns register access; capture need not stop for this RF-only change.
  */
-static int retune_selected(birriasdr_dev_t *dev, uint64_t frequency_hz, unsigned fraction_bits)
+static int retune_selected(birriasdr_dev_t *dev, uint64_t frequency_hz, unsigned fraction_bits,
+                           bool high)
 {
-    bool high = frequency_hz >= MT_RF_5G_MIN_HZ;
     struct mt_2g_tuning plan;
     uint32_t routing;
     int result, restore;
@@ -225,7 +225,9 @@ static int retune_selected(birriasdr_dev_t *dev, uint64_t frequency_hz, unsigned
     return result < 0 ? result : restore;
 }
 
-/* Program the public tuning interval using all 20 fractional bits.
+/* Program the public tuning interval using all 20 fractional bits, corrected
+ * for the reference's ppm error. The band is the requested center's, so a
+ * correction cannot move a band edge center into the other band's plan.
  * Reject the known diagnostic rails, but do not call unsaturated status PLL
  * lock: the full status fields and absolute RF accuracy remain uncharacterized.
  * Startup and live control both use this path, without changing gain or clocks.
@@ -235,7 +237,8 @@ int mt_set_frequency(birriasdr_dev_t *dev, uint64_t frequency_hz)
     uint32_t diagnostic;
     if (!mt_frequency_supported(frequency_hz))
         return BIRRIASDR_ERROR_UNSUPPORTED;
-    BS_TRY(retune_selected(dev, frequency_hz, MT_RF_FRACTION_BITS));
+    BS_TRY(retune_selected(dev, bs_corrected_frequency(frequency_hz, dev->ppm),
+                           MT_RF_FRACTION_BITS, frequency_hz >= MT_RF_5G_MIN_HZ));
     BS_TRY(mt_rf_read(dev, MT_SYNTH_PORT, 0xd74, &diagnostic));
     return diagnostic == 0xfffff400 || diagnostic == 0x00000400 ?
            BIRRIASDR_ERROR_STATE : 0;
@@ -273,5 +276,5 @@ int mt_retune_2g_probe(birriasdr_dev_t *dev, uint64_t frequency_hz, unsigned fra
     BS_TRY(bs_read32(dev, BS_MMIO, 0x80021090, &control));
     if (state != 1 || go || (control & 2))
         return BIRRIASDR_ERROR_STATE;
-    return retune_selected(dev, frequency_hz, fraction_bits);
+    return retune_selected(dev, frequency_hz, fraction_bits, frequency_hz >= MT_RF_5G_MIN_HZ);
 }

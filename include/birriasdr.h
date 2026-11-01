@@ -50,7 +50,8 @@ enum birriasdr_capability {
     BIRRIASDR_CAP_CALIBRATION = 1u << 6,
     BIRRIASDR_CAP_LIVE_GAIN = 1u << 7,
     BIRRIASDR_CAP_TUNING = 1u << 8,
-    BIRRIASDR_CAP_LIVE_TUNING = 1u << 9
+    BIRRIASDR_CAP_LIVE_TUNING = 1u << 9,
+    BIRRIASDR_CAP_FREQ_CORRECTION = 1u << 10
 };
 
 /** Discovery includes recognized but unimplemented devices (capabilities=0).
@@ -333,8 +334,15 @@ int birriasdr_set_agc_mode(birriasdr_dev_t *dev, int enabled);
  */
 int birriasdr_set_tuner_bandwidth(birriasdr_dev_t *dev, uint32_t bandwidth_hz);
 
-/** Reserved: oscillator correction in ppm. UNSUPPORTED; no software DDC added. */
+/** Correct the tuning for a reference crystal that is ppm parts per million off,
+ * positive when it runs fast, as rtl-sdr does; -1000 to 1000. The synthesizer is
+ * programmed for center / (1 + ppm / 1e6) while get_center_freq keeps reporting
+ * the requested center. The sample clock shares the crystal and keeps its error.
+ * With CAP_FREQ_CORRECTION; while idle it applies at the next read, and during
+ * capture it retunes under the same rules as set_center_freq.
+ */
 int birriasdr_set_freq_correction(birriasdr_dev_t *dev, int ppm);
+int birriasdr_get_freq_correction(const birriasdr_dev_t *dev);
 
 /** Reserved: physical antenna routing. UNSUPPORTED; chain != antenna switch. */
 int birriasdr_set_antenna(birriasdr_dev_t *dev, unsigned antenna);

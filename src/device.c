@@ -495,11 +495,45 @@ int birriasdr_set_tuner_bandwidth(birriasdr_dev_t *dev, uint32_t bandwidth)
     return unsupported_control(dev);
 }
 
-/* TODO: establish crystal/PLL correction without changing sample interpretation. */
+/* The frequency to program for a request when the reference is ppm off, rounded. */
+uint64_t bs_corrected_frequency(uint64_t frequency, int32_t ppm)
+{
+    uint64_t scale = (uint64_t)(1000000 + ppm);
+    return (frequency * 1000000 + scale / 2) / scale;
+}
+
+/* Same live-window rules as set_center_freq; a failed retune restores the old value. */
 int birriasdr_set_freq_correction(birriasdr_dev_t *dev, int ppm)
 {
-    (void)ppm;
-    return unsupported_control(dev);
+    unsigned state;
+    int32_t before;
+    int result = 0;
+    if (!dev || ppm < -1000 || ppm > 1000)
+        return BIRRIASDR_ERROR_INVALID;
+    if (!(dev->backend->capabilities & BIRRIASDR_CAP_FREQ_CORRECTION))
+        return BIRRIASDR_ERROR_UNSUPPORTED;
+    pthread_mutex_lock(&dev->control_mutex);
+    state = atomic_load(&dev->run_state);
+    if (state != BS_IDLE && (state != BS_RUNNING || !dev->control_ready)) {
+        result = BIRRIASDR_ERROR_BUSY;
+    } else {
+        before = dev->ppm;
+        dev->ppm = ppm;
+        if (state == BS_RUNNING) {
+            result = dev->backend->change_frequency(dev, atomic_load(&dev->frequency));
+            if (result < 0) {
+                dev->ppm = before;
+                control_failed(dev, result, BIRRIASDR_STAGE_RF);
+            }
+        }
+    }
+    pthread_mutex_unlock(&dev->control_mutex);
+    return result;
+}
+
+int birriasdr_get_freq_correction(const birriasdr_dev_t *dev)
+{
+    return dev ? dev->ppm : 0;
 }
 
 /* TODO: decode board routing; the ICAP chain selector is a different control. */
