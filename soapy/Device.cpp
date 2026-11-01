@@ -317,6 +317,28 @@ std::vector<std::string> SoapyBirria::listFrequencies(const int, const size_t) c
     return {"RF"};
 }
 
+/* The reference crystal's error in ppm, positive when it runs fast, rounded to
+ * whole ppm; the library retunes at once and keeps reporting the requested
+ * center. The sample clock keeps its error.
+ */
+bool SoapyBirria::hasFrequencyCorrection(const int direction, const size_t) const
+{
+    return direction == SOAPY_SDR_RX;
+}
+
+void SoapyBirria::setFrequencyCorrection(const int, const size_t, const double value)
+{
+    std::shared_lock<std::shared_mutex> control(controlMutex_);
+    report(birriasdr_set_freq_correction(dev_, static_cast<int>(std::lround(value))),
+           "set_freq_correction");
+}
+
+double SoapyBirria::getFrequencyCorrection(const int, const size_t) const
+{
+    std::shared_lock<std::shared_mutex> control(controlMutex_);
+    return birriasdr_get_freq_correction(dev_);
+}
+
 /* Report one range per contiguous band, so front ends cannot offer the gaps
  * between them. A band this board cannot reach returns UNSUPPORTED and is
  * skipped. INVALID marks the end of the list.

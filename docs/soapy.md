@@ -11,6 +11,7 @@ converts samples to the requested format without resampling.
 | --- | --- |
 | Driver key | `driver=birria`. A dongle is selected by enumeration order with `index=N` |
 | Sample rates | 10, 20, 40 and 80 MSps, the native rates. The module does not resample, so an application that needs a lower rate decimates the stream itself |
+| Frequency correction | In ppm, rounded to whole ppm, through `birriasdr_set_freq_correction()`. It retunes at once and does not correct the sample clock |
 | Stream formats | `CS16` (native, raw) and `CF32` |
 | DC offset mode | Automatic (default) or off. Automatic takes the library's DC estimate (`birriasdr_get_dc_offset()`), the digital gain stage's truncation, out of `CF32`. `CS16` is always raw |
 | Frequency range | One range per band, from `birriasdr_get_tuning_band()`, so front ends do not offer the gap between bands. The bands match the frequency tuning row of the README [specifications](../README.md#specifications) |

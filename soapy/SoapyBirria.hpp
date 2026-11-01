@@ -59,6 +59,9 @@ public:
                                              const size_t channel) const override;
     SoapySDR::RangeList getFrequencyRange(const int direction, const size_t channel,
                                           const std::string &name) const override;
+    bool hasFrequencyCorrection(const int direction, const size_t channel) const override;
+    void setFrequencyCorrection(const int direction, const size_t channel, const double value) override;
+    double getFrequencyCorrection(const int direction, const size_t channel) const override;
 
     void setSampleRate(const int direction, const size_t channel, const double rate) override;
     double getSampleRate(const int direction, const size_t channel) const override;

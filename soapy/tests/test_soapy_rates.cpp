@@ -105,6 +105,13 @@ int birriasdr_get_dc_offset(const birriasdr_dev_t *, float *i, float *q)
     return 0;
 }
 int birriasdr_set_center_freq(birriasdr_dev_t *, uint64_t) { return 0; }
+static int stub_ppm;
+int birriasdr_set_freq_correction(birriasdr_dev_t *, int ppm)
+{
+    stub_ppm = ppm;
+    return 0;
+}
+int birriasdr_get_freq_correction(const birriasdr_dev_t *) { return stub_ppm; }
 uint64_t birriasdr_get_center_freq(const birriasdr_dev_t *) { return 2437000000u; }
 int birriasdr_get_tuning_band(const birriasdr_dev_t *, uint32_t, uint64_t *, uint64_t *)
 {
@@ -158,6 +165,9 @@ int main()
     dev.setDCOffsetMode(SOAPY_SDR_RX, 0, false);
     CHECK(!dev.getDCOffsetMode(SOAPY_SDR_RX, 0));
     dev.setDCOffsetMode(SOAPY_SDR_RX, 0, true);
+    CHECK(dev.hasFrequencyCorrection(SOAPY_SDR_RX, 0));
+    dev.setFrequencyCorrection(SOAPY_SDR_RX, 0, -12.6);
+    CHECK(stub_ppm == -13 && dev.getFrequencyCorrection(SOAPY_SDR_RX, 0) == -13);
 
     const auto listed = dev.listSampleRates(SOAPY_SDR_RX, 0);
     CHECK(listed.size() == 4);
