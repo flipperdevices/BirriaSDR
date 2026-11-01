@@ -253,8 +253,8 @@ void SoapyBirria::setGain(const int direction, const size_t channel, const doubl
 }
 
 /* Return the stage's dB, or its raw code without a table: from the codes the
- * library committed in manual mode, or the stored codes that manual mode will
- * apply while automatic mode is on. Soapy's total is the sum of the stages.
+ * library committed, which in automatic mode are the AGC's current choice, or
+ * the stored codes when the library cannot report. Soapy's total is the sum.
  */
 double SoapyBirria::getGain(const int, const size_t, const std::string &name) const
 {
@@ -265,7 +265,7 @@ double SoapyBirria::getGain(const int, const size_t, const std::string &name) co
     birriasdr_gain_table table;
     int manual = 0;
     size_t count;
-    if (birriasdr_get_gain_codes(dev_, &committed, &manual) == 0 && manual)
+    if (birriasdr_get_gain_codes(dev_, &committed, &manual) == 0)
         gain = committed;
     const uint8_t code = name == "LNA" ? gain.lna : name == "LPF" ? gain.lpf : gain.digital;
     if (gainTable(dev_, table)) {

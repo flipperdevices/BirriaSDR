@@ -14,7 +14,7 @@ converts samples to the requested format without resampling.
 | Stream formats | `CS16` (native) and `CF32` |
 | Frequency range | One range per band, from `birriasdr_get_tuning_band()`, so front ends do not offer the gap between bands. The bands match the frequency tuning row of the README [specifications](../README.md#specifications) |
 | Gains | `LNA`, `LPF` and `DIG` in dB from the library's measured table for the current band; a value snaps to the nearest step of its stage. The overall gain fills the LNA first, then `LPF`, then `DIG`, as `birriasdr_set_tuner_gain()` does. In a band without a table the elements are raw codes: `LNA` 0 to 5, `LPF` 0 to 8 and `DIG` 0 to 12 |
-| Gain mode | Automatic (the library default) or manual. Automatic mode releases the manual overrides and is not full closed-loop AGC. Gain codes apply only in manual mode. In automatic mode they are stored and sent once manual mode is selected. In manual mode a refused change keeps the previous code |
+| Gain mode | Automatic (the library default) or manual. Automatic mode runs the library's AGC, and the gain elements then show its current choice. Gains set in automatic mode are stored and sent once manual mode is selected. In manual mode a refused change keeps the previous code |
 
 Each frequency range is a command interval from the library, not measured RF
 coverage. A band that the board cannot reach is left out. The sample rate can
@@ -98,8 +98,8 @@ SOAPY_SDR_PLUGIN_PATH=$PWD/build/soapy <application>
 ```
 
 Select the `driver=birria` device in the application's device list. Turn
-automatic gain off to use the `LNA`, `LPF` and `DIG` controls. A reasonable
-start is `LNA` 2, `LPF` 8 and `DIG` 0, or `LNA` 4 in the 5 GHz band. The sample
+automatic gain off to use the overall gain or the `LNA`, `LPF` and `DIG`
+controls, all in dB. Automatic gain is a reasonable start. The sample
 rate sets the span, from 10 MHz at 10 MSps to 80 MHz at 80 MSps. Enter
 frequencies in Hz, for example `2437000000` for Wi-Fi channel 6. General-purpose
 SDR applications cannot demodulate Wi-Fi, so use their spectrum, waterfall or
