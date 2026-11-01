@@ -33,7 +33,10 @@ timestamps, no serial number and no sensors.
 
 Errors from tuning, sample-rate changes and gain changes are logged, not
 thrown, because some front ends do not catch exceptions from these calls and
-would abort. A rejected frequency leaves the receiver where it was.
+would abort. A center outside the tuning bands leaves the receiver where it
+was, and reads give zeros until a center inside them is set, because front ends
+such as SDR++ do not limit tuning to the reported ranges and would show the old
+center's samples under the new label.
 
 The module enables the library's automatic recovery, so a stream keeps running
 across overruns. Each gap reaches the application as `SOAPY_SDR_OVERFLOW` from

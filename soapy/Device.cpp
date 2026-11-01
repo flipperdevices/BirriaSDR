@@ -340,13 +340,29 @@ double SoapyBirria::getGain(const int, const size_t, const std::string &name) co
     throw std::runtime_error("birria: unknown gain element " + name);
 }
 
-/* Request a center in Hz. The library rejects it without retuning if invalid. */
+/* Request a center in Hz. The library rejects one outside the tuning bands
+ * without retuning. Applications such as SDR++ do not limit tuning to
+ * getFrequencyRange() and would label the old center's samples with the new
+ * one, so reads give zeros until a tunable center is set.
+ */
 void SoapyBirria::setFrequency(const int, const size_t, const std::string &, const double frequency,
                                const SoapySDR::Kwargs &)
 {
     std::shared_lock<std::shared_mutex> control(controlMutex_);
-    report(birriasdr_set_center_freq(dev_, static_cast<uint64_t>(std::llround(frequency))),
-           "set_center_freq");
+    const int result = birriasdr_set_center_freq(dev_, static_cast<uint64_t>(std::llround(frequency)));
+    if (result == BIRRIASDR_ERROR_UNSUPPORTED) {
+        if (!offBand_.exchange(true)) {
+            try {
+                SoapySDR::logf(SOAPY_SDR_WARNING,
+                               "birria: %.0f Hz is outside the tuning bands; zeros until a center inside them",
+                               frequency);
+            } catch (...) {
+            }
+        }
+        return;
+    }
+    if (report(result, "set_center_freq"))
+        offBand_ = false;
 }
 
 /* Return the committed center, not the frequency of samples already queued. */
@@ -841,7 +857,9 @@ int SoapyBirria::readLocked(void *const *buffs, const size_t numElems,
         soapy_birria_read_hook();
         const size_t n = std::min(current_.size() / 2 - offset_, numElems - count);
         const int16_t *in = &current_[2 * offset_];
-        if (cs16_) {
+        if (offBand_.load()) {
+            std::memset(static_cast<char *>(buffs[0]) + (cs16_ ? 4 : 8) * count, 0, (cs16_ ? 4 : 8) * n);
+        } else if (cs16_) {
             std::memcpy(static_cast<int16_t *>(buffs[0]) + 2 * count, in, 4 * n);
         } else {
             constexpr float kScale = 1.0f / 8192.0f;

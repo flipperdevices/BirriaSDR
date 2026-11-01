@@ -104,7 +104,11 @@ int birriasdr_get_dc_offset(const birriasdr_dev_t *, float *i, float *q)
     *i = *q = 0;
     return 0;
 }
-int birriasdr_set_center_freq(birriasdr_dev_t *, uint64_t) { return 0; }
+/* The real bands are 2156..2610 and 4500..6200 MHz; between them is enough here. */
+int birriasdr_set_center_freq(birriasdr_dev_t *, uint64_t frequency_hz)
+{
+    return frequency_hz > 2610000000u && frequency_hz < 4500000000u ? BIRRIASDR_ERROR_UNSUPPORTED : 0;
+}
 static int stub_ppm;
 int birriasdr_set_freq_correction(birriasdr_dev_t *, int ppm)
 {
@@ -455,6 +459,35 @@ int main()
     CHECK(after == "OE");
     CHECK(dev.deactivateStream(stream) == 0);
     dev.closeStream(stream);
+
+    /* An untunable center gives zeros in both formats until a tunable one. */
+    for (const char *format : {SOAPY_SDR_CS16, SOAPY_SDR_CF32}) {
+        const bool cs16 = std::string(format) == SOAPY_SDR_CS16;
+        stream = dev.setupStream(SOAPY_SDR_RX, format);
+        CHECK(dev.activateStream(stream) == 0);
+        const auto first = [&] {
+            static float buf[2 * 1024];
+            void *buffs[] = {buf};
+            int flags = 0, n = 0;
+            long long time = 0;
+            while ((n = dev.readStream(stream, buffs, 1024, flags, time, 500000)) == SOAPY_SDR_OVERFLOW) {
+            }
+            CHECK(n > 0);
+            return cs16 ? static_cast<double>(reinterpret_cast<int16_t *>(buf)[2 * (n - 1)])
+                        : static_cast<double>(buf[2 * (n - 1)]);
+        };
+        CHECK(first() != 0);
+        dev.setFrequency(SOAPY_SDR_RX, 0, "RF", 3013e6, {});
+        for (int i = 0; i < 3; ++i)
+            first();
+        CHECK(first() == 0);
+        dev.setFrequency(SOAPY_SDR_RX, 0, "RF", 5013e6, {});
+        for (int i = 0; i < 3; ++i)
+            first();
+        CHECK(first() != 0);
+        CHECK(dev.deactivateStream(stream) == 0);
+        dev.closeStream(stream);
+    }
 
     puts("SoapySDR native sample rate tests passed");
     return 0;

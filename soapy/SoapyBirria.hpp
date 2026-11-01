@@ -124,6 +124,7 @@ private:
     std::atomic<bool> active_{false};  /* between activateStream and deactivateStream */
     std::atomic<bool> running_{false}; /* the worker's library read has not returned */
     std::atomic<bool> dcAuto_{true};   /* CF32 takes out the library's DC estimate */
+    std::atomic<bool> offBand_{false}; /* the requested center is untunable: reads give zeros */
     std::atomic<bool> callbackFailed_{false};
     std::atomic<bool> restarting_{false}; /* a rate change is restarting the read */
     /* Held by readStream() for its whole call. A rate change takes it, so it
