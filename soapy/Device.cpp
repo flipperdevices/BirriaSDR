@@ -96,28 +96,38 @@ size_t SoapyBirria::getNumChannels(const int direction) const
     return direction == SOAPY_SDR_RX ? 1 : 0;
 }
 
-/* One antenna per receive chain, named RX0 and RX1 after the chain. The chain
- * is set up when a read starts, so a running stream restarts as for a rate
- * change.
+/* One antenna per receive chain, named RX0 and RX1 after the chain, and AUTO,
+ * which captures the stronger chain, compared at the start of a read and after
+ * each retune. The chain is set up when a read starts, so a running stream
+ * restarts as for a rate change.
  */
 std::vector<std::string> SoapyBirria::listAntennas(const int, const size_t) const
 {
     std::vector<std::string> names;
-    for (unsigned i = 0; i < birriasdr_get_antenna_count(dev_); ++i)
+    const unsigned count = birriasdr_get_antenna_count(dev_);
+    for (unsigned i = 0; i < count; ++i)
         names.push_back("RX" + std::to_string(i));
+    if (count > 1)
+        names.push_back("AUTO");
     return names;
 }
 
 void SoapyBirria::setAntenna(const int, const size_t, const std::string &name)
 {
     std::unique_lock<std::shared_mutex> control(controlMutex_);
-    if (name.size() != 3 || name.compare(0, 2, "RX") != 0 || name[2] < '0' || name[2] > '9') {
+    unsigned antenna;
+    if (name == "AUTO") {
+        antenna = BIRRIASDR_ANTENNA_AUTO;
+        if (birriasdr_get_antenna_auto(dev_))
+            return;
+    } else if (name.size() == 3 && name.compare(0, 2, "RX") == 0 && name[2] >= '0' && name[2] <= '9') {
+        antenna = static_cast<unsigned>(name[2] - '0');
+        if (!birriasdr_get_antenna_auto(dev_) && antenna == birriasdr_get_antenna(dev_))
+            return;
+    } else {
         SoapySDR::log(SOAPY_SDR_ERROR, "birria: unknown antenna " + name);
         return;
     }
-    const unsigned antenna = static_cast<unsigned>(name[2] - '0');
-    if (antenna == birriasdr_get_antenna(dev_))
-        return;
     whileIdle([this, antenna] {
         report(birriasdr_set_antenna(dev_, antenna), "set_antenna");
     }, "birria: cannot restart the stream after an antenna change");
@@ -126,6 +136,8 @@ void SoapyBirria::setAntenna(const int, const size_t, const std::string &name)
 std::string SoapyBirria::getAntenna(const int, const size_t) const
 {
     std::shared_lock<std::shared_mutex> control(controlMutex_);
+    if (birriasdr_get_antenna_auto(dev_))
+        return "AUTO";
     return "RX" + std::to_string(birriasdr_get_antenna(dev_));
 }
 

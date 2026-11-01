@@ -113,14 +113,18 @@ int birriasdr_set_freq_correction(birriasdr_dev_t *, int ppm)
 }
 int birriasdr_get_freq_correction(const birriasdr_dev_t *) { return stub_ppm; }
 static unsigned stub_antenna;
+static bool stub_antenna_auto;
 int birriasdr_set_antenna(birriasdr_dev_t *, unsigned antenna)
 {
-    if (antenna > 1)
+    if (antenna > 1 && antenna != BIRRIASDR_ANTENNA_AUTO)
         return BIRRIASDR_ERROR_INVALID;
-    stub_antenna = antenna;
+    stub_antenna_auto = antenna == BIRRIASDR_ANTENNA_AUTO;
+    if (!stub_antenna_auto)
+        stub_antenna = antenna;
     return 0;
 }
 unsigned birriasdr_get_antenna(const birriasdr_dev_t *) { return stub_antenna; }
+int birriasdr_get_antenna_auto(const birriasdr_dev_t *) { return stub_antenna_auto; }
 unsigned birriasdr_get_antenna_count(const birriasdr_dev_t *) { return 2; }
 static uint32_t stub_bandwidth;
 int birriasdr_set_tuner_bandwidth(birriasdr_dev_t *, uint32_t bandwidth)
@@ -196,7 +200,9 @@ int main()
     CHECK(dev.hasFrequencyCorrection(SOAPY_SDR_RX, 0));
     dev.setFrequencyCorrection(SOAPY_SDR_RX, 0, -12.6);
     CHECK(stub_ppm == -13 && dev.getFrequencyCorrection(SOAPY_SDR_RX, 0) == -13);
-    CHECK(dev.listAntennas(SOAPY_SDR_RX, 0).size() == 2 && dev.getAntenna(SOAPY_SDR_RX, 0) == "RX0");
+    CHECK(dev.listAntennas(SOAPY_SDR_RX, 0).size() == 3 && dev.getAntenna(SOAPY_SDR_RX, 0) == "RX0");
+    dev.setAntenna(SOAPY_SDR_RX, 0, "AUTO");
+    CHECK(stub_antenna_auto && dev.getAntenna(SOAPY_SDR_RX, 0) == "AUTO");
     dev.setAntenna(SOAPY_SDR_RX, 0, "RX1");
     CHECK(stub_antenna == 1 && dev.getAntenna(SOAPY_SDR_RX, 0) == "RX1");
     dev.setAntenna(SOAPY_SDR_RX, 0, "RX7");
