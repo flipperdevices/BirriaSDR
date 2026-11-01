@@ -96,17 +96,49 @@ size_t SoapyBirria::getNumChannels(const int direction) const
     return direction == SOAPY_SDR_RX ? 1 : 0;
 }
 
-/* Raw hardware codes (the library has no calibrated dB gain yet). */
+/* The measured stage table of the current band, when the library has one. */
+static bool gainTable(birriasdr_dev_t *dev, birriasdr_gain_table &table)
+{
+    return birriasdr_get_gain_table(dev, &table) == 0;
+}
+
+/* One stage's dB per code, in tenths, and how many codes it has. */
+static const int16_t *stageGains(const birriasdr_gain_table &table, const std::string &name,
+                                 size_t &count)
+{
+    if (name == "LNA") {
+        count = table.lna_count;
+        return table.lna;
+    }
+    if (name == "LPF") {
+        count = table.lpf_count;
+        return table.lpf;
+    }
+    if (name == "DIG") {
+        count = table.digital_count;
+        return table.digital;
+    }
+    throw std::runtime_error("birria: unknown gain element " + name);
+}
+
+/* The three stages, LNA first, which is also the order the total fills them. */
 std::vector<std::string> SoapyBirria::listGains(const int, const size_t) const
 {
     return {"LNA", "LPF", "DIG"};
 }
 
-/* Code limits for each gain element, in steps of one. The library accepts LNA
- * 0 to 5, and 5 GHz needs 4 or 5 for full sensitivity.
+/* In dB from the measured table of the current band, as continuous ranges that
+ * setGain snaps to the nearest step. Without a table, raw codes in steps of one:
+ * LNA 0 to 5, LPF 0 to 8, DIG 0 to 12.
  */
 SoapySDR::Range SoapyBirria::getGainRange(const int, const size_t, const std::string &name) const
 {
+    birriasdr_gain_table table;
+    size_t count;
+    if (gainTable(dev_, table)) {
+        const int16_t *gains = stageGains(table, name, count);
+        return SoapySDR::Range(0, gains[count - 1] / 10.0);
+    }
     if (name == "LNA")
         return SoapySDR::Range(0, 5, 1);
     if (name == "LPF")
@@ -114,6 +146,16 @@ SoapySDR::Range SoapyBirria::getGainRange(const int, const size_t, const std::st
     if (name == "DIG")
         return SoapySDR::Range(0, 12, 1);
     throw std::runtime_error("birria: unknown gain element " + name);
+}
+
+/* The total in dB when the band has a table; otherwise the sum of raw ranges. */
+SoapySDR::Range SoapyBirria::getGainRange(const int direction, const size_t channel) const
+{
+    birriasdr_gain_table table;
+    if (!gainTable(dev_, table))
+        return SoapySDR::Device::getGainRange(direction, channel);
+    return SoapySDR::Range(0, (table.lna[table.lna_count - 1] + table.lpf[table.lpf_count - 1] +
+                               table.digital[table.digital_count - 1]) / 10.0);
 }
 
 /* The library starts in automatic mode and accepts codes only in manual mode,
@@ -145,17 +187,38 @@ bool SoapyBirria::getGainMode(const int, const size_t) const
     return birriasdr_get_gain_codes(dev_, &gain, &manual) != 0 || !manual;
 }
 
-/* Round and clamp the code. In automatic mode it is stored for later. In manual
- * mode it replaces only its own element of the library's committed codes, so a
- * stale stored code for another element is never sent. It is stored only if
- * the library accepts it, so a refused change does not look applied.
+/* With gainMutex_ held: in manual mode send the codes and keep them only if the
+ * library accepts them, so a refused change does not look applied; in automatic
+ * mode store them for when manual mode starts.
+ */
+void SoapyBirria::commitGainLocked(const birriasdr_gain &next, const bool manual)
+{
+    if (!manual || report(birriasdr_set_gain_codes(dev_, &next), "set_gain_codes"))
+        gain_ = next;
+}
+
+/* Snap the request to one stage's code: the nearest measured dB, the lowest of
+ * codes with equal gain; or, without a table, the rounded and clamped code. In
+ * manual mode it replaces only its own stage of the library's committed codes,
+ * so a stale stored code for another stage is never sent.
  */
 void SoapyBirria::setGain(const int, const size_t, const std::string &name, const double value)
 {
     std::shared_lock<std::shared_mutex> control(controlMutex_);
-    const auto range = getGainRange(SOAPY_SDR_RX, 0, name);
-    const uint8_t code = static_cast<uint8_t>(
-        std::lround(std::clamp(value, range.minimum(), range.maximum())));
+    birriasdr_gain_table table;
+    uint8_t code = 0;
+    if (gainTable(dev_, table)) {
+        size_t count;
+        const int16_t *gains = stageGains(table, name, count);
+        const double tenths = value * 10.0;
+        for (size_t i = 1; i < count; ++i)
+            if (std::fabs(gains[i] - tenths) < std::fabs(gains[code] - tenths))
+                code = static_cast<uint8_t>(i);
+    } else {
+        const auto range = getGainRange(SOAPY_SDR_RX, 0, name);
+        code = static_cast<uint8_t>(
+            std::lround(std::clamp(value, range.minimum(), range.maximum())));
+    }
     std::lock_guard<std::mutex> lock(gainMutex_);
     birriasdr_gain committed;
     int manual = 0;
@@ -167,12 +230,31 @@ void SoapyBirria::setGain(const int, const size_t, const std::string &name, cons
         next.lpf = code;
     else
         next.digital = code;
-    if (!(known && manual) || report(birriasdr_set_gain_codes(dev_, &next), "set_gain_codes"))
-        gain_ = next;
+    commitGainLocked(next, known && manual);
 }
 
-/* Return the code the library committed in manual mode, or the stored code
- * that manual mode will apply while automatic mode is on.
+/* A total in dB fills the LNA first, then the filter stage, then digital gain,
+ * as the library's set_tuner_gain does. Without a table, Soapy's default spread.
+ */
+void SoapyBirria::setGain(const int direction, const size_t channel, const double value)
+{
+    std::shared_lock<std::shared_mutex> control(controlMutex_);
+    birriasdr_gain next;
+    if (birriasdr_tuner_gain_codes(dev_, static_cast<int>(std::lround(value * 10.0)), &next) != 0) {
+        control.unlock();
+        SoapySDR::Device::setGain(direction, channel, value);
+        return;
+    }
+    std::lock_guard<std::mutex> lock(gainMutex_);
+    birriasdr_gain committed;
+    int manual = 0;
+    const bool known = birriasdr_get_gain_codes(dev_, &committed, &manual) == 0;
+    commitGainLocked(next, known && manual);
+}
+
+/* Return the stage's dB, or its raw code without a table: from the codes the
+ * library committed in manual mode, or the stored codes that manual mode will
+ * apply while automatic mode is on. Soapy's total is the sum of the stages.
  */
 double SoapyBirria::getGain(const int, const size_t, const std::string &name) const
 {
@@ -180,15 +262,18 @@ double SoapyBirria::getGain(const int, const size_t, const std::string &name) co
     std::lock_guard<std::mutex> lock(gainMutex_);
     birriasdr_gain gain = gain_;
     birriasdr_gain committed;
+    birriasdr_gain_table table;
     int manual = 0;
+    size_t count;
     if (birriasdr_get_gain_codes(dev_, &committed, &manual) == 0 && manual)
         gain = committed;
-    if (name == "LNA")
-        return gain.lna;
-    if (name == "LPF")
-        return gain.lpf;
-    if (name == "DIG")
-        return gain.digital;
+    const uint8_t code = name == "LNA" ? gain.lna : name == "LPF" ? gain.lpf : gain.digital;
+    if (gainTable(dev_, table)) {
+        const int16_t *gains = stageGains(table, name, count);
+        return code < count ? gains[code] / 10.0 : 0.0;
+    }
+    if (name == "LNA" || name == "LPF" || name == "DIG")
+        return code;
     throw std::runtime_error("birria: unknown gain element " + name);
 }
 

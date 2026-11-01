@@ -91,6 +91,14 @@ int birriasdr_get_gain_codes(birriasdr_dev_t *, struct birriasdr_gain *gain, int
     *manual = 0;
     return 0;
 }
+int birriasdr_get_gain_table(const birriasdr_dev_t *, struct birriasdr_gain_table *)
+{
+    return BIRRIASDR_ERROR_UNSUPPORTED;
+}
+int birriasdr_tuner_gain_codes(const birriasdr_dev_t *, int, struct birriasdr_gain *)
+{
+    return BIRRIASDR_ERROR_UNSUPPORTED;
+}
 int birriasdr_set_center_freq(birriasdr_dev_t *, uint64_t) { return 0; }
 uint64_t birriasdr_get_center_freq(const birriasdr_dev_t *) { return 2437000000u; }
 int birriasdr_get_tuning_band(const birriasdr_dev_t *, uint32_t, uint64_t *, uint64_t *)

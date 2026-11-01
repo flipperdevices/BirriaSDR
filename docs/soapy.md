@@ -13,7 +13,7 @@ converts samples to the requested format without resampling.
 | Sample rates | 10, 20, 40 and 80 MSps, the native rates. The module does not resample, so an application that needs a lower rate decimates the stream itself |
 | Stream formats | `CS16` (native) and `CF32` |
 | Frequency range | One range per band, from `birriasdr_get_tuning_band()`, so front ends do not offer the gap between bands. The bands match the frequency tuning row of the README [specifications](../README.md#specifications) |
-| Gains | `LNA` 0 to 5, `LPF` 0 to 8 and `DIG` 0 to 12. These are raw codes, not dB. The 5 GHz band needs `LNA` 4 or 5 for full sensitivity |
+| Gains | `LNA`, `LPF` and `DIG` in dB from the library's measured table for the current band; a value snaps to the nearest step of its stage. The overall gain fills the LNA first, then `LPF`, then `DIG`, as `birriasdr_set_tuner_gain()` does. In a band without a table the elements are raw codes: `LNA` 0 to 5, `LPF` 0 to 8 and `DIG` 0 to 12 |
 | Gain mode | Automatic (the library default) or manual. Automatic mode releases the manual overrides and is not full closed-loop AGC. Gain codes apply only in manual mode. In automatic mode they are stored and sent once manual mode is selected. In manual mode a refused change keeps the previous code |
 
 Each frequency range is a command interval from the library, not measured RF

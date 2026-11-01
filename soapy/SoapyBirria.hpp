@@ -38,11 +38,13 @@ public:
     std::vector<std::string> listGains(const int direction, const size_t channel) const override;
     SoapySDR::Range getGainRange(const int direction, const size_t channel,
                                  const std::string &name) const override;
+    SoapySDR::Range getGainRange(const int direction, const size_t channel) const override;
     bool hasGainMode(const int direction, const size_t channel) const override;
     void setGainMode(const int direction, const size_t channel, const bool automatic) override;
     bool getGainMode(const int direction, const size_t channel) const override;
     void setGain(const int direction, const size_t channel, const std::string &name,
                  const double value) override;
+    void setGain(const int direction, const size_t channel, const double value) override;
     double getGain(const int direction, const size_t channel,
                    const std::string &name) const override;
 
@@ -82,6 +84,7 @@ private:
     void onGap();
     int readLocked(void *const *buffs, size_t numElems,
                    std::chrono::steady_clock::time_point deadline, bool &interrupted);
+    void commitGainLocked(const birriasdr_gain &next, bool manual);
     void markGap();
     void onCallbackFailure();
     int startWorker();
