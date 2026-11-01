@@ -203,6 +203,14 @@ static const struct bs_band bands[] = {
     {MT_RF_MIN_HZ, MT_RF_MAX_HZ, &gain_2g}, {MT_RF_5G_MIN_HZ, MT_RF_5G_MAX_HZ, &gain_5g}
 };
 
+/* Live: ICAP tap 4 reads chain 0 and tap 5 chain 1; both receive once chain
+ * 1's bank is on, as it is for the automatic antenna.
+ */
+static int select_chain(birriasdr_dev_t *dev, unsigned chain)
+{
+    return bs_update32(dev, BS_MMIO, 0x830ad448, 0xf00, (4u + chain) << 8);
+}
+
 const struct bs_backend bs_mt7921_backend = {
     .chipset = BIRRIASDR_CHIP_MT7921,
     .name = "MT7961/MT7972",
@@ -217,6 +225,7 @@ const struct bs_backend bs_mt7921_backend = {
     .agc_digital = 1u << 0 | 1u << 6,
     .filters = filters, .filter_count = sizeof(filters) / sizeof(filters[0]),
     .antenna_count = 2,
+    .select_chain = select_chain,
     .default_rate = 40000000,
     .validate = validate,
     .identify = identify,

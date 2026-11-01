@@ -508,8 +508,13 @@ static void test_antenna(void)
     CHECK(birriasdr_set_antenna(&dev, 0) == BIRRIASDR_ERROR_BUSY);
     atomic_store(&dev.run_state, BS_IDLE);
     CHECK(birriasdr_set_antenna(&dev, 0) == 0);
+    CHECK(birriasdr_set_antenna(&dev, BIRRIASDR_ANTENNA_AUTO) == 0);
+    CHECK(birriasdr_get_antenna_auto(&dev) && birriasdr_get_antenna(&dev) == 0);
+    CHECK(birriasdr_set_antenna(&dev, 1) == 0);
+    CHECK(!birriasdr_get_antenna_auto(&dev) && birriasdr_get_antenna(&dev) == 1);
     dev.backend = bs_lookup_id(0x0e8d, 0x7925)->backend;
     CHECK(birriasdr_set_antenna(&dev, 0) == BIRRIASDR_ERROR_UNSUPPORTED);
+    CHECK(birriasdr_set_antenna(&dev, BIRRIASDR_ANTENNA_AUTO) == BIRRIASDR_ERROR_UNSUPPORTED);
     CHECK(birriasdr_get_antenna_count(&dev) == 1);
     CHECK(pthread_mutex_destroy(&dev.control_mutex) == 0);
 }

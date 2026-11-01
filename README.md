@@ -79,7 +79,7 @@ For more detail, see:
 | Sample rate | 10, 20, 40 or 80 MSps complex. The default is 40 MSps |
 | Sampled bandwidth | A span equal to the sample rate, with nominal analog and digital settings for that span, or a 40 MHz filter at 80 MSps and a 20 MHz one at 40 MSps. The 10 MSps rate uses the 20 MHz analog setting with a narrower digital filter. See [filter characteristics](docs/mt7921.md#filtering) for rolloff and aliasing limits |
 | Sample resolution | Signed 14-bit I and Q, from −8192 to 8191 |
-| Receive channels | One at a time, chain 0 or chain 1, each with its own antenna connector |
+| Receive channels | One at a time, chain 0 or chain 1, each with its own antenna connector, or the stronger of the two chosen automatically |
 | Transmit | None, receive only |
 | Gain | Calibrated in whole dB from a measured table: 0 to 46 dB at 2.4 GHz and 0 to 40 dB at 5 GHz, within about 1 dB on two boards and both receive chains. Raw codes for LNA 0 to 5, filter stage 0 to 8 and digital 0 to 12 stay available |
 | Live gain changes | Supported without restarting capture, with a brief settling transient |

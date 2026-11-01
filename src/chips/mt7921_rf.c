@@ -288,7 +288,7 @@ static int select_receive_path(birriasdr_dev_t *dev)
         BS_TRY(rf_words(dev, p, receive_pairs, sizeof(receive_pairs) / sizeof(receive_pairs[0])));
         BS_TRY(mt_rf_update(dev, p, 0x160, 0xc0000000, 0));
     }
-    if (dev->antenna)
+    if (dev->antenna || dev->antenna_auto)
         BS_TRY(mt_rf_update(dev, 0, 0x1e4, ~0xc0u, 0x3fb0b & ~0xc0u));
     return bs_update32(dev, BS_MMIO, 0x830ad448, 0xf00, (4u + dev->antenna) << 8);
 }

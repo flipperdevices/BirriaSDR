@@ -69,6 +69,8 @@ struct bs_backend {
     unsigned filter_count;
     /* Receive chains a read can capture; 0 or 1 means only the first. */
     unsigned antenna_count;
+    /* Switch the captured chain during a read, for the automatic antenna. */
+    int (*select_chain)(birriasdr_dev_t *, unsigned chain);
     uint32_t default_rate;
     int (*validate)(uint64_t frequency, uint32_t rate, const struct birriasdr_gain *gain);
     int (*identify)(birriasdr_dev_t *);
@@ -119,7 +121,8 @@ struct birriasdr_dev {
     char cpus[64];       /* CPU list for the library's threads, when cpus_set */
     bool cpus_set;       /* else BIRRIA_CPUS applies */
     uint32_t bandwidth; /* requested filter width in Hz; 0 matches the rate */
-    uint8_t antenna;    /* receive chain the next read captures */
+    uint8_t antenna;    /* receive chain captured, the choice when automatic */
+    bool antenna_auto;  /* choose the stronger chain at start and after retunes */
     bool manual;
     /* Automatic mode runs the host AGC, keeping the codes forced, instead of
      * releasing them to the chip.
@@ -136,6 +139,10 @@ struct birriasdr_dev {
         atomic_int_fast64_t dc_i, dc_q, dc_count;
         atomic_bool dc_restart;
         uint64_t dc_skip_until; /* bs_now_ns() before which DC is not measured */
+        /* Automatic antenna: compare the chains at the next chance; withhold
+         * samples until the first comparison of a read is done.
+         */
+        atomic_bool probe_request, probing;
         struct bs_agc_state state; /* used by the AGC thread only */
     } agc;
     uint32_t nonce;
@@ -144,8 +151,8 @@ struct birriasdr_dev {
     bool needs_usb_reset;
     bool usb_lost;
     struct {
-        uint32_t gain_baseline[4];
-        unsigned gain_chain;
+        uint32_t gain_baseline[2][4];
+        unsigned gain_chains; /* bit per receive chain forced */
         bool gain_saved;
         uint32_t filter_baseline[12];
         uint32_t filter_fields;
@@ -196,7 +203,7 @@ struct birriasdr_gain bs_pick_codes(const struct birriasdr_gain_table *table, in
                                     uint16_t digital_codes);
 int bs_set_gain_locked(birriasdr_dev_t *dev, bool manual, const struct birriasdr_gain *gain);
 int bs_agc_next(struct bs_agc_state *state, int total, int top, uint64_t mean_square, int peak);
-void bs_agc_measure(birriasdr_dev_t *dev, const int16_t *iq, uint32_t count);
+bool bs_agc_measure(birriasdr_dev_t *dev, const int16_t *iq, uint32_t count);
 void bs_agc_start(birriasdr_dev_t *dev);
 void bs_agc_stop(birriasdr_dev_t *dev);
 

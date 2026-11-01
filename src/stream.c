@@ -31,7 +31,11 @@ static void flush_samples(struct delivery *delivery)
 {
     if (!delivery->used)
         return;
-    bs_agc_measure(delivery->dev, delivery->iq, delivery->used);
+    /* The automatic antenna's first comparison withholds the read's first samples. */
+    if (bs_agc_measure(delivery->dev, delivery->iq, delivery->used) && !delivery->delivered) {
+        delivery->used = 0;
+        return;
+    }
     delivery->callback(delivery->iq, delivery->used, delivery->delivered, delivery->context);
     delivery->delivered += delivery->used;
     delivery->dev->stats.samples = delivery->delivered - delivery->segment_start;

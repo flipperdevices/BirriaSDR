@@ -20,6 +20,11 @@
  * and fills it LNA first with only the digital codes the backend lists in
  * agc_digital, so it never picks one that leaves an offset.
  *
+ * With the automatic antenna the loop also compares the receive chains, about
+ * 15 ms each, at the start of a read and after each retune, and captures the one
+ * with more power; delivery withholds the read's samples until the first
+ * comparison is done.
+ *
  * The same samples feed a DC estimate. The chip notches DC in hardware, so what
  * is left there is the digital gain stage's truncation, fixed per code: the
  * estimate restarts when the digital code changes, skipping the samples that
@@ -38,6 +43,9 @@
 #define BS_AGC_SETTLE_MS 10
 #define BS_AGC_HEAD 4096u
 #define BS_DC_SKIP_MS 10u
+#define BS_PROBE_SETTLE_MS 5
+#define BS_PROBE_MEASURE_MS 15
+#define BS_PROBE_GIVE_UP_TICKS 25
 #define BS_DC_SPAN (1 << 24)
 
 static void sleep_ms(long ms)
@@ -87,14 +95,16 @@ int bs_agc_next(struct bs_agc_state *state, int total, int top, uint64_t mean_sq
     return state->target;
 }
 
-/* Called by delivery for every buffer it hands over. */
-void bs_agc_measure(birriasdr_dev_t *dev, const int16_t *iq, uint32_t count)
+/* Called by delivery for every buffer it hands over; true while the automatic
+ * antenna's first comparison is running and samples are to be withheld.
+ */
+bool bs_agc_measure(birriasdr_dev_t *dev, const int16_t *iq, uint32_t count)
 {
     uint64_t power = 0;
     int64_t sum_i = 0, sum_q = 0;
     int peak = 0;
     if (!dev->agc.running)
-        return;
+        return false;
     if (atomic_exchange(&dev->agc.dc_restart, false)) {
         atomic_store(&dev->agc.dc_i, 0);
         atomic_store(&dev->agc.dc_q, 0);
@@ -129,6 +139,7 @@ void bs_agc_measure(birriasdr_dev_t *dev, const int16_t *iq, uint32_t count)
     for (int seen = atomic_load(&dev->agc.peak);
          peak > seen && !atomic_compare_exchange_weak(&dev->agc.peak, &seen, peak);)
         ;
+    return atomic_load(&dev->agc.probing);
 }
 
 static void reset_measurement(birriasdr_dev_t *dev)
@@ -168,14 +179,61 @@ static bool agc_tick(birriasdr_dev_t *dev, uint64_t power, uint64_t count, int p
     return bs_set_gain_locked(dev, false, &next) == 0;
 }
 
+/* Switch the captured chain with the control lock held, while the read is live. */
+static bool select_chain(birriasdr_dev_t *dev, unsigned chain)
+{
+    bool done = false;
+    pthread_mutex_lock(&dev->control_mutex);
+    if (dev->control_ready && atomic_load(&dev->run_state) == BS_RUNNING &&
+        dev->backend->select_chain(dev, chain) == 0) {
+        dev->antenna = (uint8_t)chain;
+        done = true;
+    }
+    pthread_mutex_unlock(&dev->control_mutex);
+    return done;
+}
+
+/* Mean power of each chain over BS_PROBE_MEASURE_MS, then capture the stronger. */
+static void compare_chains(birriasdr_dev_t *dev)
+{
+    uint64_t mean[2] = {0, 0};
+    for (unsigned chain = 0; chain < 2; ++chain) {
+        if (!select_chain(dev, chain))
+            return;
+        sleep_ms(BS_PROBE_SETTLE_MS);
+        reset_measurement(dev);
+        sleep_ms(BS_PROBE_MEASURE_MS);
+        uint64_t count = atomic_exchange(&dev->agc.count, 0);
+        mean[chain] = count ? atomic_exchange(&dev->agc.power, 0) / count : 0;
+    }
+    select_chain(dev, mean[1] > mean[0] ? 1 : 0);
+    atomic_store(&dev->agc.dc_restart, true);
+    reset_measurement(dev);
+}
+
 static void *agc_loop(void *arg)
 {
     birriasdr_dev_t *dev = arg;
+    unsigned waiting = 0;
     while (!atomic_load(&dev->agc.stop)) {
         uint64_t power, count;
         int peak;
         bool changed;
         sleep_ms(BS_AGC_TICK_MS);
+        if (atomic_load(&dev->agc.probe_request)) {
+            if (dev->control_ready && atomic_load(&dev->run_state) == BS_RUNNING) {
+                atomic_store(&dev->agc.probe_request, false);
+                compare_chains(dev);
+                atomic_store(&dev->agc.probing, false);
+                waiting = 0;
+                continue;
+            }
+            if (++waiting > BS_PROBE_GIVE_UP_TICKS) {
+                atomic_store(&dev->agc.probe_request, false);
+                atomic_store(&dev->agc.probing, false);
+                waiting = 0;
+            }
+        }
         power = atomic_exchange(&dev->agc.power, 0);
         count = atomic_exchange(&dev->agc.count, 0);
         peak = atomic_exchange(&dev->agc.peak, 0);
@@ -198,6 +256,10 @@ void bs_agc_start(birriasdr_dev_t *dev)
     reset_measurement(dev);
     dev->agc.state = (struct bs_agc_state){-1, 0, 0, 0, 0};
     atomic_store(&dev->agc.dc_restart, true);
+    /* A finite read gets only the packets it asks for, so withholding would starve it. */
+    const bool probe = dev->antenna_auto && dev->stream_continuous;
+    atomic_store(&dev->agc.probe_request, probe);
+    atomic_store(&dev->agc.probing, probe);
     atomic_store(&dev->agc.stop, false);
     dev->agc.running = pthread_create(&dev->agc.thread, NULL, agc_loop, dev) == 0;
 }

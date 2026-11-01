@@ -135,28 +135,38 @@ static int gain_values(const struct birriasdr_gain *gain, uint32_t values[4])
 /* Each read boots into an unforced baseline. Save it even in released mode so
  * a later manual update cannot mistake its own force bits for the baseline.
  * Only the capture owner may call this initialization, before releasing GO.
- * The chain is the antenna's; it is saved with the baseline, so every later
- * change and the restore touch the same chain.
+ * The chains are the antenna's, both when it is automatic so the choice
+ * compares them at the same codes; they are saved with the baselines, so every
+ * later change and the restore touch the same chains.
  */
 int mt_apply_gain(birriasdr_dev_t *dev)
 {
-    uint32_t before[4], coarse, values[4];
-    unsigned chain = dev->antenna;
+    uint32_t before[2][4], coarse, values[4];
+    unsigned chains = dev->antenna_auto ? 3u : 1u << dev->antenna;
     BS_TRY(gain_values(&dev->gain, values));
-    BS_TRY(gain_snapshot(dev, chain, before));
-    BS_TRY(bs_read32(dev, BS_MMIO, 0x830000d0, &coarse));
-    if ((before[3] & 0x80000000) && !(before[0] & 7) && !(before[2] & 0x80000000) &&
-        !(coarse & (1u << 27))) {
-        BS_TRY(gain_write(dev, chain, 3, 0));
-        BS_TRY(gain_snapshot(dev, chain, before));
+    for (unsigned chain = 0; chain < 2; ++chain) {
+        if (!(chains & 1u << chain))
+            continue;
+        BS_TRY(gain_snapshot(dev, chain, before[chain]));
+        BS_TRY(bs_read32(dev, BS_MMIO, 0x830000d0, &coarse));
+        if ((before[chain][3] & 0x80000000) && !(before[chain][0] & 7) &&
+            !(before[chain][2] & 0x80000000) && !(coarse & (1u << 27))) {
+            BS_TRY(gain_write(dev, chain, 3, 0));
+            BS_TRY(gain_snapshot(dev, chain, before[chain]));
+        }
+        if ((before[chain][0] & 7) || (before[chain][2] & 0x80000000) ||
+            (before[chain][3] & 0x80000000) || (coarse & (1u << 27)))
+            return BIRRIASDR_ERROR_STATE;
     }
-    if ((before[0] & 7) || (before[2] & 0x80000000) ||
-        (before[3] & 0x80000000) || (coarse & (1u << 27)))
-        return BIRRIASDR_ERROR_STATE;
     memcpy(dev->mt7921.gain_baseline, before, sizeof(before));
-    dev->mt7921.gain_chain = chain;
+    dev->mt7921.gain_chains = chains;
     dev->mt7921.gain_saved = true;
-    return dev->manual || dev->host_agc ? gain_transaction(dev, chain, before, values, true) : 0;
+    if (!dev->manual && !dev->host_agc)
+        return 0;
+    for (unsigned chain = 0; chain < 2; ++chain)
+        if (chains & 1u << chain)
+            BS_TRY(gain_transaction(dev, chain, before[chain], values, true));
+    return 0;
 }
 
 /* Change gain on an initialized receiver without stopping ICAP or rebooting.
@@ -173,10 +183,15 @@ int mt_change_gain(birriasdr_dev_t *dev, bool manual, const struct birriasdr_gai
     BS_TRY(gain_values(gain, values));
     if (!dev->mt7921.gain_saved)
         return BIRRIASDR_ERROR_STATE;
-    if (!manual)
-        memcpy(values, dev->mt7921.gain_baseline, sizeof(values));
-    BS_TRY(gain_snapshot(dev, dev->mt7921.gain_chain, before));
-    return gain_transaction(dev, dev->mt7921.gain_chain, before, values, manual);
+    for (unsigned chain = 0; chain < 2; ++chain) {
+        if (!(dev->mt7921.gain_chains & 1u << chain))
+            continue;
+        if (!manual)
+            memcpy(values, dev->mt7921.gain_baseline[chain], sizeof(values));
+        BS_TRY(gain_snapshot(dev, chain, before));
+        BS_TRY(gain_transaction(dev, chain, before, values, manual));
+    }
+    return 0;
 }
 
 /* WFSYS reset does not reliably erase analog gain overrides. Restore this
@@ -190,12 +205,15 @@ int mt_restore_gain(birriasdr_dev_t *dev)
     int first_error = 0;
     if (!dev->mt7921.gain_saved)
         return 0;
-    for (unsigned i = 0; i < 4; ++i) {
-        unsigned field = order[i];
-        int result = gain_write(dev, dev->mt7921.gain_chain, field,
-                                dev->mt7921.gain_baseline[field]);
-        if (result < 0 && !first_error)
-            first_error = result;
+    for (unsigned chain = 0; chain < 2; ++chain) {
+        if (!(dev->mt7921.gain_chains & 1u << chain))
+            continue;
+        for (unsigned i = 0; i < 4; ++i) {
+            unsigned field = order[i];
+            int result = gain_write(dev, chain, field, dev->mt7921.gain_baseline[chain][field]);
+            if (result < 0 && !first_error)
+                first_error = result;
+        }
     }
     if (!first_error)
         dev->mt7921.gain_saved = false;

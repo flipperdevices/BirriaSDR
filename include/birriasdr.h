@@ -356,13 +356,24 @@ int birriasdr_get_tuner_bandwidths(const birriasdr_dev_t *dev, uint32_t *widths,
 int birriasdr_set_freq_correction(birriasdr_dev_t *dev, int ppm);
 int birriasdr_get_freq_correction(const birriasdr_dev_t *dev);
 
+#define BIRRIASDR_ANTENNA_AUTO 0xffu
+
 /** Choose the receive chain, with CAP_ANTENNA: 0, the default, or 1 below
  * get_antenna_count. Each chain has its own antenna connector; which one is the
  * board's to say. Applies at the next read; BUSY during capture. Gain codes
  * apply to the chosen chain, and the gain table holds for both.
+ *
+ * BIRRIASDR_ANTENNA_AUTO keeps both chains receiving at the same gain codes and
+ * captures the one with more power: measured for about 15 ms each at the start
+ * of a read, before any sample is delivered, and again after each retune, when
+ * the samples of those 40 ms can come from either chain. read_sync skips the
+ * first comparison and captures the chain birriasdr_get_antenna reports.
  */
 int birriasdr_set_antenna(birriasdr_dev_t *dev, unsigned antenna);
+/** The chain captured: the chosen one, or the automatic choice so far. */
 unsigned birriasdr_get_antenna(const birriasdr_dev_t *dev);
+/** 1 while the antenna is automatic. */
+int birriasdr_get_antenna_auto(const birriasdr_dev_t *dev);
 unsigned birriasdr_get_antenna_count(const birriasdr_dev_t *dev);
 
 /** Reserved: apply volatile calibration coefficients. UNSUPPORTED until their

@@ -196,6 +196,8 @@ int birriasdr_set_center_freq(birriasdr_dev_t *dev, uint64_t frequency)
             control_failed(dev, result, BIRRIASDR_STAGE_RF);
             goto done;
         }
+        if (dev->antenna_auto)
+            atomic_store(&dev->agc.probe_request, true);
     }
     atomic_store(&dev->frequency, frequency);
 done:
@@ -572,19 +574,29 @@ int birriasdr_get_freq_correction(const birriasdr_dev_t *dev)
 int birriasdr_set_antenna(birriasdr_dev_t *dev, unsigned antenna)
 {
     int result = 0;
+    bool automatic = antenna == BIRRIASDR_ANTENNA_AUTO;
     if (!dev)
         return BIRRIASDR_ERROR_INVALID;
-    if (!(dev->backend->capabilities & BIRRIASDR_CAP_ANTENNA))
+    if (!(dev->backend->capabilities & BIRRIASDR_CAP_ANTENNA) ||
+        (automatic && (dev->backend->antenna_count < 2 || !dev->backend->select_chain)))
         return BIRRIASDR_ERROR_UNSUPPORTED;
-    if (antenna >= dev->backend->antenna_count)
+    if (!automatic && antenna >= dev->backend->antenna_count)
         return BIRRIASDR_ERROR_INVALID;
     pthread_mutex_lock(&dev->control_mutex);
-    if (atomic_load(&dev->run_state) != BS_IDLE)
+    if (atomic_load(&dev->run_state) != BS_IDLE) {
         result = BIRRIASDR_ERROR_BUSY;
-    else
-        dev->antenna = (uint8_t)antenna;
+    } else {
+        dev->antenna_auto = automatic;
+        if (!automatic)
+            dev->antenna = (uint8_t)antenna;
+    }
     pthread_mutex_unlock(&dev->control_mutex);
     return result;
+}
+
+int birriasdr_get_antenna_auto(const birriasdr_dev_t *dev)
+{
+    return dev && dev->antenna_auto;
 }
 
 unsigned birriasdr_get_antenna(const birriasdr_dev_t *dev)
