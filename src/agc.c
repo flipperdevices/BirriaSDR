@@ -17,7 +17,14 @@
  * signal that went away gets its gain back quickly, but not within
  * BS_AGC_LOCK_TICKS of a clip, so the gaps between bursts do not set it off. The loop keeps its own
  * target total, since a small step may pick the same codes,
- * and fills it LNA first.
+ * and fills it LNA first with only the digital codes the backend lists in
+ * agc_digital, so it never picks one that leaves an offset.
+ *
+ * The same samples feed a DC estimate. The chip notches DC in hardware, so what
+ * is left there is the digital gain stage's truncation, fixed per code: the
+ * estimate restarts when the digital code changes, skipping the samples that
+ * arrive in the next BS_DC_SKIP_MS, which may still carry the old code, and
+ * halves past BS_DC_SPAN so it keeps following.
  *
  * Delivery measures only the head of each buffer, with atomics, so the sample
  * path takes no lock; the loop applies changes through the same locked path as
@@ -30,6 +37,8 @@
 #define BS_AGC_TICK_MS 20
 #define BS_AGC_SETTLE_MS 10
 #define BS_AGC_HEAD 4096u
+#define BS_DC_SKIP_MS 10u
+#define BS_DC_SPAN (1 << 24)
 
 static void sleep_ms(long ms)
 {
@@ -82,16 +91,38 @@ int bs_agc_next(struct bs_agc_state *state, int total, int top, uint64_t mean_sq
 void bs_agc_measure(birriasdr_dev_t *dev, const int16_t *iq, uint32_t count)
 {
     uint64_t power = 0;
+    int64_t sum_i = 0, sum_q = 0;
     int peak = 0;
     if (!dev->agc.running)
         return;
+    if (atomic_exchange(&dev->agc.dc_restart, false)) {
+        atomic_store(&dev->agc.dc_i, 0);
+        atomic_store(&dev->agc.dc_q, 0);
+        atomic_store(&dev->agc.dc_count, 0);
+        dev->agc.dc_skip_until = bs_now_ns() + BS_DC_SKIP_MS * UINT64_C(1000000);
+    }
     if (count > BS_AGC_HEAD)
         count = BS_AGC_HEAD;
-    for (uint32_t n = 0; n < 2 * count; ++n) {
-        int v = iq[n] < 0 ? -iq[n] : iq[n];
-        power += (uint64_t)(v * v);
-        if (v > peak)
-            peak = v;
+    for (uint32_t n = 0; n < count; ++n) {
+        int i = iq[2 * n], q = iq[2 * n + 1];
+        int vi = i < 0 ? -i : i, vq = q < 0 ? -q : q;
+        sum_i += i;
+        sum_q += q;
+        power += (uint64_t)(vi * vi + vq * vq);
+        if (vi > peak)
+            peak = vi;
+        if (vq > peak)
+            peak = vq;
+    }
+    if (bs_now_ns() >= dev->agc.dc_skip_until) {
+        if (atomic_load(&dev->agc.dc_count) > BS_DC_SPAN) {
+            atomic_store(&dev->agc.dc_i, atomic_load(&dev->agc.dc_i) / 2);
+            atomic_store(&dev->agc.dc_q, atomic_load(&dev->agc.dc_q) / 2);
+            atomic_store(&dev->agc.dc_count, atomic_load(&dev->agc.dc_count) / 2);
+        }
+        atomic_fetch_add(&dev->agc.dc_i, sum_i);
+        atomic_fetch_add(&dev->agc.dc_q, sum_q);
+        atomic_fetch_add(&dev->agc.dc_count, (int_fast64_t)count);
     }
     atomic_fetch_add(&dev->agc.power, power);
     atomic_fetch_add(&dev->agc.count, count);
@@ -107,6 +138,17 @@ static void reset_measurement(birriasdr_dev_t *dev)
     atomic_store(&dev->agc.peak, 0);
 }
 
+int birriasdr_get_dc_offset(const birriasdr_dev_t *dev, float *i, float *q)
+{
+    int_fast64_t count;
+    if (!dev || !i || !q)
+        return BIRRIASDR_ERROR_INVALID;
+    count = atomic_load(&dev->agc.dc_count);
+    *i = count ? (float)((double)atomic_load(&dev->agc.dc_i) / count) : 0.0f;
+    *q = count ? (float)((double)atomic_load(&dev->agc.dc_q) / count) : 0.0f;
+    return 0;
+}
+
 /* One decision with the control lock held; true when the codes changed. */
 static bool agc_tick(birriasdr_dev_t *dev, uint64_t power, uint64_t count, int peak)
 {
@@ -119,7 +161,8 @@ static bool agc_tick(birriasdr_dev_t *dev, uint64_t power, uint64_t count, int p
     total = bs_total_gain(table, &dev->gain);
     top = table->lna[table->lna_count - 1] + table->lpf[table->lpf_count - 1] +
           table->digital[table->digital_count - 1];
-    next = bs_pick_codes(table, bs_agc_next(&dev->agc.state, total, top, power / (2 * count), peak));
+    next = bs_pick_codes(table, bs_agc_next(&dev->agc.state, total, top, power / (2 * count), peak),
+                         dev->backend->agc_digital);
     if (next.lna == dev->gain.lna && next.lpf == dev->gain.lpf && next.digital == dev->gain.digital)
         return false;
     return bs_set_gain_locked(dev, false, &next) == 0;
@@ -154,6 +197,7 @@ void bs_agc_start(birriasdr_dev_t *dev)
 {
     reset_measurement(dev);
     dev->agc.state = (struct bs_agc_state){-1, 0, 0, 0, 0};
+    atomic_store(&dev->agc.dc_restart, true);
     atomic_store(&dev->agc.stop, false);
     dev->agc.running = pthread_create(&dev->agc.thread, NULL, agc_loop, dev) == 0;
 }

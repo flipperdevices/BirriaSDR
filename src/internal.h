@@ -55,6 +55,8 @@ struct bs_backend {
     uint64_t min_frequency, max_frequency;
     const struct bs_band *bands; /* NULL means one band, min to max. */
     unsigned band_count;
+    /* Digital gain codes the AGC may use, one bit per code; 0 allows all. */
+    uint16_t agc_digital;
     uint32_t default_rate;
     int (*validate)(uint64_t frequency, uint32_t rate, const struct birriasdr_gain *gain);
     int (*identify)(birriasdr_dev_t *);
@@ -115,6 +117,10 @@ struct birriasdr_dev {
         atomic_bool stop;
         pthread_t thread;
         bool running;
+        /* DC estimate: written by delivery only; a digital gain change asks it to restart. */
+        atomic_int_fast64_t dc_i, dc_q, dc_count;
+        atomic_bool dc_restart;
+        uint64_t dc_skip_until; /* bs_now_ns() before which DC is not measured */
         struct bs_agc_state state; /* used by the AGC thread only */
     } agc;
     uint32_t nonce;
@@ -169,7 +175,8 @@ struct bs_framer {
 
 const struct birriasdr_gain_table *bs_band_gain(const birriasdr_dev_t *dev);
 int bs_total_gain(const struct birriasdr_gain_table *table, const struct birriasdr_gain *gain);
-struct birriasdr_gain bs_pick_codes(const struct birriasdr_gain_table *table, int tenths_db);
+struct birriasdr_gain bs_pick_codes(const struct birriasdr_gain_table *table, int tenths_db,
+                                    uint16_t digital_codes);
 int bs_set_gain_locked(birriasdr_dev_t *dev, bool manual, const struct birriasdr_gain *gain);
 int bs_agc_next(struct bs_agc_state *state, int total, int top, uint64_t mean_square, int peak);
 void bs_agc_measure(birriasdr_dev_t *dev, const int16_t *iq, uint32_t count);

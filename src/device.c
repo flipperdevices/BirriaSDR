@@ -294,6 +294,8 @@ int bs_set_gain_locked(birriasdr_dev_t *dev, bool manual, const struct birriasdr
             return result;
         }
     }
+    if (gain->digital != dev->gain.digital)
+        atomic_store(&dev->agc.dc_restart, true);
     dev->manual = manual;
     dev->gain = *gain;
     return 0;
@@ -373,10 +375,12 @@ int bs_total_gain(const struct birriasdr_gain_table *table, const struct birrias
 }
 
 /* Fill the request stage by stage: the highest LNA code that fits, then the
- * filter code that fits best, then the nearest digital code for the rest. Of
- * filter codes with equal gain only the lowest is used.
+ * filter code that fits best, then the nearest digital code for the rest, of
+ * those digital_codes allows (one bit per code; 0 allows all). Of filter codes
+ * with equal gain only the lowest is used.
  */
-struct birriasdr_gain bs_pick_codes(const struct birriasdr_gain_table *table, int tenths_db)
+struct birriasdr_gain bs_pick_codes(const struct birriasdr_gain_table *table, int tenths_db,
+                                    uint16_t digital_codes)
 {
     struct birriasdr_gain gain = {0, 0, 0};
     int rest;
@@ -390,7 +394,8 @@ struct birriasdr_gain bs_pick_codes(const struct birriasdr_gain_table *table, in
             gain.lpf = (uint8_t)f;
     rest -= table->lpf[gain.lpf];
     for (int d = 1; d < table->digital_count; ++d)
-        if (abs(table->digital[d] - rest) < abs(table->digital[gain.digital] - rest))
+        if ((!digital_codes || digital_codes & 1u << d) &&
+            abs(table->digital[d] - rest) < abs(table->digital[gain.digital] - rest))
             gain.digital = (uint8_t)d;
     return gain;
 }
@@ -414,7 +419,7 @@ int birriasdr_tuner_gain_codes(const birriasdr_dev_t *dev, int tenths_db,
         return BIRRIASDR_ERROR_INVALID;
     if (!(dev->backend->capabilities & BIRRIASDR_CAP_GAIN_DB) || !(table = bs_band_gain(dev)))
         return BIRRIASDR_ERROR_UNSUPPORTED;
-    *gain = bs_pick_codes(table, tenths_db);
+    *gain = bs_pick_codes(table, tenths_db, 0);
     return 0;
 }
 
@@ -449,7 +454,7 @@ int birriasdr_get_tuner_gains(birriasdr_dev_t *dev, int *gains, size_t capacity)
     top = table->lna[table->lna_count - 1] + table->lpf[table->lpf_count - 1] +
           table->digital[table->digital_count - 1];
     for (int request = 0; request <= top + 9; request += 10) {
-        struct birriasdr_gain gain = bs_pick_codes(table, request);
+        struct birriasdr_gain gain = bs_pick_codes(table, request, 0);
         int total = bs_total_gain(table, &gain);
         if (total <= last)
             continue;

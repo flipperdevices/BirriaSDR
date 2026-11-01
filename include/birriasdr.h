@@ -295,6 +295,15 @@ int birriasdr_get_gain_table(const birriasdr_dev_t *dev, struct birriasdr_gain_t
  */
 int birriasdr_set_tuner_gain(birriasdr_dev_t *dev, int tenths_db);
 
+/** The DC offset the current stream carries, in sample units (full scale 8192),
+ * estimated from the delivered samples. The chip notches DC in hardware; what is
+ * left is truncation in the digital gain stage, up to about -2 on I and Q at
+ * digital code 12 and none at 0 and 6. The estimate restarts when the digital
+ * code changes and settles to about 0.1 within 50 ms. Delivered samples are not
+ * changed; subtract it from them, as the Soapy module does for CF32.
+ */
+int birriasdr_get_dc_offset(const birriasdr_dev_t *dev, float *i, float *q);
+
 /** Report the codes set_tuner_gain would apply for this request in the current
  * band, without applying them; for front ends that store codes while automatic.
  */

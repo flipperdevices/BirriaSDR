@@ -199,6 +199,8 @@ const struct bs_backend bs_mt7921_backend = {
     .default_frequency = MT_RF_ANCHOR_HZ,
     .min_frequency = MT_RF_MIN_HZ, .max_frequency = MT_RF_5G_MAX_HZ,
     .bands = bands, .band_count = sizeof(bands) / sizeof(bands[0]),
+    /* Digital codes other than 0 and 6 truncate, leaving I and Q up to 2 low. */
+    .agc_digital = 1u << 0 | 1u << 6,
     .default_rate = 40000000,
     .validate = validate,
     .identify = identify,

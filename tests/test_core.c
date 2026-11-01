@@ -354,6 +354,10 @@ static void test_tuner_gain(void)
     for (int i = 1; i < count; ++i)
         CHECK(gains[i] > gains[i - 1] && gains[i] - gains[i - 1] <= 16);
     CHECK(birriasdr_get_tuner_gains(&dev, gains, 3) == count);
+    gain = bs_pick_codes(&table, 400, 1u << 0 | 1u << 6);
+    CHECK(gain.lna == 5 && gain.lpf == 8 && gain.digital == 6);
+    gain = bs_pick_codes(&table, 350, 1u << 0 | 1u << 6);
+    CHECK(gain.lna == 5 && gain.lpf == 8 && gain.digital == 0);
     CHECK(birriasdr_tuner_gain_codes(&dev, 200, &gain) == 0);
     CHECK(gain.lna == 3 && gain.lpf == 0 && gain.digital == 0);
     CHECK(birriasdr_set_tuner_gain(&dev, 200) == BIRRIASDR_ERROR_STATE);
