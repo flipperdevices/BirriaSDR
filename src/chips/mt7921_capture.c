@@ -169,15 +169,33 @@ static int identify(birriasdr_dev_t *dev)
     return (chip & 0xffff) == 0x7961 ? 0 : BIRRIASDR_ERROR_UNSUPPORTED;
 }
 
+/* Measured on one board against another Flipper One's test packets at 2472 and
+ * 5785 MHz, noise subtracted, about 1 dB accuracy. Filter codes 0..6 measured
+ * the same; the digital stage is 1 dB per code in both bands.
+ */
+static const struct birriasdr_gain_table gain_2g = {
+    .lna = {0, 58, 116, 200, 238, 304},
+    .lpf = {0, 0, 0, 0, 0, 0, 0, 20, 40},
+    .digital = {0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120},
+    .lna_count = 6, .lpf_count = 9, .digital_count = 13
+};
+
+static const struct birriasdr_gain_table gain_5g = {
+    .lna = {0, 60, 106, 120, 179, 235},
+    .lpf = {0, 0, 0, 0, 0, 0, 0, 20, 40},
+    .digital = {0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120},
+    .lna_count = 6, .lpf_count = 9, .digital_count = 13
+};
+
 static const struct bs_band bands[] = {
-    {MT_RF_MIN_HZ, MT_RF_MAX_HZ}, {MT_RF_5G_MIN_HZ, MT_RF_5G_MAX_HZ}
+    {MT_RF_MIN_HZ, MT_RF_MAX_HZ, &gain_2g}, {MT_RF_5G_MIN_HZ, MT_RF_5G_MAX_HZ, &gain_5g}
 };
 
 const struct bs_backend bs_mt7921_backend = {
     .chipset = BIRRIASDR_CHIP_MT7921,
     .name = "MT7961/MT7972",
-    .capabilities = BIRRIASDR_CAP_RX | BIRRIASDR_CAP_RAW_GAIN | BIRRIASDR_CAP_LIVE_GAIN |
-                    BIRRIASDR_CAP_TUNING | BIRRIASDR_CAP_LIVE_TUNING,
+    .capabilities = BIRRIASDR_CAP_RX | BIRRIASDR_CAP_RAW_GAIN | BIRRIASDR_CAP_GAIN_DB |
+                    BIRRIASDR_CAP_LIVE_GAIN | BIRRIASDR_CAP_TUNING | BIRRIASDR_CAP_LIVE_TUNING,
     .default_frequency = MT_RF_ANCHOR_HZ,
     .min_frequency = MT_RF_MIN_HZ, .max_frequency = MT_RF_5G_MAX_HZ,
     .bands = bands, .band_count = sizeof(bands) / sizeof(bands[0]),

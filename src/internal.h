@@ -30,9 +30,12 @@ struct bs_io {
     int (*write32)(void *, enum bs_space, uint32_t, uint32_t);
 };
 
-/* One contiguous tuning interval; backends list them in ascending order. */
+/* One contiguous tuning interval; backends list them in ascending order. A band
+ * without a measured gain table leaves calibrated gain UNSUPPORTED there.
+ */
 struct bs_band {
     uint64_t min_frequency, max_frequency;
+    const struct birriasdr_gain_table *gain;
 };
 
 struct bs_backend {

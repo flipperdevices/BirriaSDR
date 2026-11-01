@@ -72,6 +72,16 @@ struct birriasdr_gain {
     uint8_t digital;   /**< Digital gain code 0..12. */
 };
 
+/** Measured gain of every raw index of each stage for one band, in tenths of a dB
+ * relative to index 0. Stages add: the gain of a code set is lna + lpf + digital.
+ */
+struct birriasdr_gain_table {
+    int16_t lna[8];
+    int16_t lpf[16];
+    int16_t digital[16];
+    uint8_t lna_count, lpf_count, digital_count;
+};
+
 /** Last hardware operation reached; useful when a read fails before samples arrive. */
 enum birriasdr_stage {
     BIRRIASDR_STAGE_IDLE,
@@ -269,12 +279,29 @@ int birriasdr_set_gain_codes(birriasdr_dev_t *dev, const struct birriasdr_gain *
 int birriasdr_get_gain_codes(birriasdr_dev_t *dev, struct birriasdr_gain *gain,
                             int *manual);
 
-/** Reserved: calibrated tuner gain in tenths of a dB. UNSUPPORTED until the
- * measured stage-gain mapping is known; raw indices must not be labeled dB.
+/** Copy the measured stage table of the band holding the current center. With
+ * CAP_GAIN_DB; UNSUPPORTED for a band without measurements. Retuning to the
+ * other band changes the table but keeps the committed codes.
+ */
+int birriasdr_get_gain_table(const birriasdr_dev_t *dev, struct birriasdr_gain_table *table);
+
+/** Set the total gain in tenths of a dB above all-zero codes, for the current
+ * band. Requires manual mode, like set_gain_codes. The nearest reachable total
+ * is used, filling the LNA first, then the filter stage, then digital gain,
+ * since gain early in the chain gives the best sensitivity.
  */
 int birriasdr_set_tuner_gain(birriasdr_dev_t *dev, int tenths_db);
 
-/** Reserved: enumerate calibrated gains. UNSUPPORTED; does not fill gains. */
+/** Report the codes set_tuner_gain would apply for this request in the current
+ * band, without applying them; for front ends that store codes while automatic.
+ */
+int birriasdr_tuner_gain_codes(const birriasdr_dev_t *dev, int tenths_db,
+                               struct birriasdr_gain *gain);
+
+/** List the reachable totals of set_tuner_gain for the current band, ascending,
+ * in tenths of a dB, about one dB apart. Fills at most capacity entries and
+ * returns how many there are; gains may be NULL to ask for the count.
+ */
 int birriasdr_get_tuner_gains(birriasdr_dev_t *dev, int *gains, size_t capacity);
 
 /** Reserved: global AGC enable/freeze. UNSUPPORTED because only individual

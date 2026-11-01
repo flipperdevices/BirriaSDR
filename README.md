@@ -80,7 +80,7 @@ For more detail, see:
 | Sample resolution | Signed 14-bit I and Q, from −8192 to 8191 |
 | Receive channels | One (chain 0) |
 | Transmit | None, receive only |
-| Gain | Raw codes for LNA 0 to 5, filter stage 0 to 8 and digital 0 to 12. 5 GHz needs LNA 4 or 5. Not calibrated in dB |
+| Gain | Calibrated in dB from a measured table: 0 to 46 dB at 2.4 GHz and 0 to 39.5 dB at 5 GHz, within about 1 dB on the tested board. Raw codes for LNA 0 to 5, filter stage 0 to 8 and digital 0 to 12 stay available |
 | Live gain changes | Supported without restarting capture, with a brief settling transient |
 | Automatic gain | Manual overrides can be released. Full AGC control is not implemented |
 | Frequency accuracy | Uncalibrated, with no ppm correction |
@@ -208,8 +208,9 @@ birriasdr_close(dev);
 
 This outline skips error handling, so check every return value as the example
 does. Frequencies are 64-bit values. The 2.4 and 5 GHz bands are separate, so
-`birriasdr_get_tuning_band` lists each contiguous band. The raw gain codes are
-separate from the calibrated dB gain API, which is reserved for later.
+`birriasdr_get_tuning_band` lists each contiguous band. In manual mode,
+`birriasdr_set_tuner_gain` sets a total in tenths of a dB from the measured
+table, and `birriasdr_set_gain_codes` sets the raw codes.
 
 The `read_async` function blocks the calling thread while a dedicated
 background thread keeps USB transfers queued. Callbacks receive borrowed buffers

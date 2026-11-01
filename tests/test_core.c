@@ -230,7 +230,7 @@ static void test_api(void)
     dev.rate = dev.backend->default_rate;
     CHECK(id && id->backend->chipset == BIRRIASDR_CHIP_MT7925 && !id->qualified);
     CHECK(id->backend->prepare(&dev, 0) == BIRRIASDR_ERROR_UNSUPPORTED);
-    CHECK(birriasdr_set_tuner_gain(&dev, 100) == BIRRIASDR_ERROR_UNSUPPORTED);
+    CHECK(birriasdr_set_tuner_gain(&dev, 100) == BIRRIASDR_ERROR_STATE);
     CHECK(birriasdr_set_agc_mode(&dev, 1) == BIRRIASDR_ERROR_UNSUPPORTED);
     CHECK(birriasdr_set_tuner_bandwidth(&dev, 40000000) == BIRRIASDR_ERROR_UNSUPPORTED);
     CHECK(birriasdr_set_center_freq(&dev, UINT64_C(3000000000)) == BIRRIASDR_ERROR_UNSUPPORTED);
@@ -323,6 +323,64 @@ static void test_api(void)
     CHECK(pthread_mutex_destroy(&dev.control_mutex) == 0);
 }
 
+/* Calibrated gain uses the table of the band holding the center and fills the
+ * LNA first; a backend without measurements refuses.
+ */
+static void test_tuner_gain(void)
+{
+    birriasdr_dev_t dev = {0};
+    struct birriasdr_gain_table table;
+    struct birriasdr_gain gain;
+    int gains[64], manual, count;
+    atomic_init(&dev.run_state, BS_IDLE);
+    CHECK(pthread_mutex_init(&dev.control_mutex, NULL) == 0);
+    dev.backend = &bs_mt7921_backend;
+    dev.frequency = UINT64_C(2472000000);
+    dev.rate = dev.backend->default_rate;
+    CHECK(birriasdr_get_capabilities(&dev) & BIRRIASDR_CAP_GAIN_DB);
+    CHECK(birriasdr_get_gain_table(&dev, &table) == 0);
+    CHECK(table.lna_count == 6 && table.lna[5] == 304 && table.lpf[8] == 40);
+    CHECK(table.digital_count == 13 && table.digital[12] == 120);
+    count = birriasdr_get_tuner_gains(&dev, NULL, 0);
+    CHECK(count > 30 && count <= 64);
+    CHECK(birriasdr_get_tuner_gains(&dev, gains, 64) == count);
+    CHECK(gains[0] == 0 && gains[count - 1] == 304 + 40 + 120);
+    CHECK(birriasdr_set_tuner_gain_mode(&dev, 1) == 0 && birriasdr_set_tuner_gain(&dev, 400) == 0);
+    CHECK(birriasdr_get_gain_codes(&dev, &gain, &manual) == 0);
+    CHECK(gain.lna == 5 && gain.lpf == 8 && gain.digital == 6);
+    CHECK(birriasdr_set_tuner_gain_mode(&dev, 0) == 0);
+    for (int i = 1; i < count; ++i)
+        CHECK(gains[i] > gains[i - 1] && gains[i] - gains[i - 1] <= 16);
+    CHECK(birriasdr_get_tuner_gains(&dev, gains, 3) == count);
+    CHECK(birriasdr_tuner_gain_codes(&dev, 200, &gain) == 0);
+    CHECK(gain.lna == 3 && gain.lpf == 0 && gain.digital == 0);
+    CHECK(birriasdr_set_tuner_gain(&dev, 200) == BIRRIASDR_ERROR_STATE);
+    CHECK(birriasdr_set_tuner_gain_mode(&dev, 1) == 0);
+    CHECK(birriasdr_set_tuner_gain(&dev, 200) == 0);
+    CHECK(birriasdr_get_gain_codes(&dev, &gain, &manual) == 0 && manual);
+    CHECK(gain.lna == 3 && gain.lpf == 0 && gain.digital == 0);
+    CHECK(birriasdr_set_tuner_gain(&dev, 250) == 0);
+    CHECK(birriasdr_get_gain_codes(&dev, &gain, &manual) == 0);
+    CHECK(gain.lna == 4 && gain.lpf == 0 && gain.digital == 1);
+    CHECK(birriasdr_set_tuner_gain(&dev, -50) == 0);
+    CHECK(birriasdr_get_gain_codes(&dev, &gain, &manual) == 0);
+    CHECK(gain.lna == 0 && gain.lpf == 0 && gain.digital == 0);
+    CHECK(birriasdr_set_tuner_gain(&dev, 1000) == 0);
+    CHECK(birriasdr_get_gain_codes(&dev, &gain, &manual) == 0);
+    CHECK(gain.lna == 5 && gain.lpf == 8 && gain.digital == 12);
+    CHECK(birriasdr_set_center_freq(&dev, UINT64_C(5785000000)) == 0);
+    CHECK(birriasdr_get_gain_table(&dev, &table) == 0 && table.lna[5] == 235);
+    CHECK(birriasdr_set_tuner_gain(&dev, 235) == 0);
+    CHECK(birriasdr_get_gain_codes(&dev, &gain, &manual) == 0);
+    CHECK(gain.lna == 5 && gain.lpf == 0 && gain.digital == 0);
+    dev.backend = bs_lookup_id(0x0e8d, 0x7925)->backend;
+    CHECK(birriasdr_get_gain_table(&dev, &table) == BIRRIASDR_ERROR_UNSUPPORTED);
+    CHECK(birriasdr_get_tuner_gains(&dev, NULL, 0) == BIRRIASDR_ERROR_UNSUPPORTED);
+    CHECK(birriasdr_set_tuner_gain(&dev, 100) == BIRRIASDR_ERROR_UNSUPPORTED);
+    CHECK(birriasdr_tuner_gain_codes(&dev, 100, &gain) == BIRRIASDR_ERROR_UNSUPPORTED);
+    CHECK(pthread_mutex_destroy(&dev.control_mutex) == 0);
+}
+
 /* Tests deliberately run without a dongle, root privileges or vendor firmware. */
 int main(void)
 {
@@ -334,6 +392,7 @@ int main(void)
     test_all_sample_values();
     test_image();
     test_api();
+    test_tuner_gain();
     puts("core tests passed");
     return 0;
 }
