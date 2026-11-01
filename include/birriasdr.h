@@ -328,11 +328,23 @@ int birriasdr_get_tuner_gains(birriasdr_dev_t *dev, int *gains, size_t capacity)
  */
 int birriasdr_set_agc_mode(birriasdr_dev_t *dev, int enabled);
 
-/** Reserved: independently selectable RF filter bandwidth in Hz. The backend
- * applies the nominal profile that matches the sample rate. This setter remains
- * UNSUPPORTED until additional widths and their RF response are qualified.
+/** Choose the receive filter, with CAP_FILTER. Each sample rate has fixed filter
+ * widths to choose from (get_tuner_bandwidths): the smallest at least
+ * bandwidth_hz wide is used, and 0, the default, or a wider request gets the
+ * widest, which matches the span. Applies at the next read; BUSY during
+ * capture. They are nominal channel filters, not brick walls; see
+ * docs/mt7921.md for their measured shapes.
  */
 int birriasdr_set_tuner_bandwidth(birriasdr_dev_t *dev, uint32_t bandwidth_hz);
+
+/** The filter width in Hz the next or current read uses at the set sample rate. */
+uint32_t birriasdr_get_tuner_bandwidth(const birriasdr_dev_t *dev);
+
+/** List the filter widths in Hz the set sample rate can use, ascending.
+ * Fills at most capacity entries and returns how many there are; widths may
+ * be NULL to ask for the count.
+ */
+int birriasdr_get_tuner_bandwidths(const birriasdr_dev_t *dev, uint32_t *widths, size_t capacity);
 
 /** Correct the tuning for a reference crystal that is ppm parts per million off,
  * positive when it runs fast, as rtl-sdr does; -1000 to 1000. The synthesizer is

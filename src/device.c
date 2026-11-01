@@ -485,14 +485,46 @@ int birriasdr_set_agc_mode(birriasdr_dev_t *dev, int enabled)
     return result;
 }
 
-/* TODO: independently selectable filter widths and calibrated RF response.
- * The current backend applies the profile selected by the sample rate during
- * preparation.
- */
+/* Stored for the next read, since the filter is applied before GO. */
 int birriasdr_set_tuner_bandwidth(birriasdr_dev_t *dev, uint32_t bandwidth)
 {
-    (void)bandwidth;
-    return unsupported_control(dev);
+    int result = 0;
+    if (!dev)
+        return BIRRIASDR_ERROR_INVALID;
+    if (!(dev->backend->capabilities & BIRRIASDR_CAP_FILTER))
+        return BIRRIASDR_ERROR_UNSUPPORTED;
+    pthread_mutex_lock(&dev->control_mutex);
+    if (atomic_load(&dev->run_state) != BS_IDLE)
+        result = BIRRIASDR_ERROR_BUSY;
+    else
+        dev->bandwidth = bandwidth;
+    pthread_mutex_unlock(&dev->control_mutex);
+    return result;
+}
+
+uint32_t birriasdr_get_tuner_bandwidth(const birriasdr_dev_t *dev)
+{
+    return dev ? bs_filter_width(dev) : 0;
+}
+
+int birriasdr_get_tuner_bandwidths(const birriasdr_dev_t *dev, uint32_t *widths, size_t capacity)
+{
+    int count = 0;
+    if (!dev)
+        return BIRRIASDR_ERROR_INVALID;
+    for (unsigned i = 0; dev->backend->filters && i < dev->backend->filter_count; ++i) {
+        if (dev->backend->filters[i].rate != dev->rate)
+            continue;
+        if (widths && (size_t)count < capacity)
+            widths[count] = dev->backend->filters[i].width;
+        ++count;
+    }
+    if (!count) {
+        if (widths && capacity)
+            widths[0] = dev->rate;
+        count = 1;
+    }
+    return count;
 }
 
 /* The frequency to program for a request when the reference is ppm off, rounded. */

@@ -234,7 +234,8 @@ static void test_api(void)
     CHECK(birriasdr_set_agc_mode(&dev, 2) == BIRRIASDR_ERROR_INVALID);
     CHECK(birriasdr_set_agc_mode(&dev, 1) == 0 && dev.host_agc);
     CHECK(birriasdr_set_agc_mode(&dev, 0) == 0 && !dev.host_agc);
-    CHECK(birriasdr_set_tuner_bandwidth(&dev, 40000000) == BIRRIASDR_ERROR_UNSUPPORTED);
+    CHECK(birriasdr_set_tuner_bandwidth(&dev, 40000000) == 0);
+    CHECK(birriasdr_set_tuner_bandwidth(&dev, 0) == 0);
     CHECK(birriasdr_set_center_freq(&dev, UINT64_C(3000000000)) == BIRRIASDR_ERROR_UNSUPPORTED);
     CHECK(birriasdr_set_center_freq(&dev, UINT64_C(4499999999)) == BIRRIASDR_ERROR_UNSUPPORTED);
     CHECK(birriasdr_set_center_freq(&dev, UINT64_C(6200000001)) == BIRRIASDR_ERROR_UNSUPPORTED);
@@ -454,6 +455,41 @@ static void test_freq_correction(void)
     CHECK(pthread_mutex_destroy(&dev.control_mutex) == 0);
 }
 
+/* The filter is the smallest of the rate's widths at least the request, the
+ * widest for 0 or a request too wide; set only while idle.
+ */
+static void test_bandwidth(void)
+{
+    birriasdr_dev_t dev = {0};
+    uint32_t widths[8];
+    atomic_init(&dev.run_state, BS_IDLE);
+    CHECK(pthread_mutex_init(&dev.control_mutex, NULL) == 0);
+    dev.backend = &bs_mt7921_backend;
+    dev.rate = 80000000;
+    CHECK(birriasdr_get_capabilities(&dev) & BIRRIASDR_CAP_FILTER);
+    CHECK(birriasdr_get_tuner_bandwidth(&dev) == 80000000);
+    CHECK(birriasdr_get_tuner_bandwidths(&dev, widths, 8) == 2);
+    CHECK(widths[0] == 40000000 && widths[1] == 80000000);
+    CHECK(birriasdr_set_tuner_bandwidth(&dev, 15000000) == 0);
+    CHECK(birriasdr_get_tuner_bandwidth(&dev) == 40000000);
+    CHECK(birriasdr_set_tuner_bandwidth(&dev, 50000000) == 0);
+    CHECK(birriasdr_get_tuner_bandwidth(&dev) == 80000000);
+    dev.rate = 40000000;
+    CHECK(birriasdr_set_tuner_bandwidth(&dev, 1) == 0);
+    CHECK(birriasdr_get_tuner_bandwidth(&dev) == 20000000);
+    dev.rate = 20000000;
+    CHECK(birriasdr_get_tuner_bandwidths(&dev, NULL, 0) == 1);
+    CHECK(birriasdr_get_tuner_bandwidth(&dev) == 20000000);
+    dev.rate = 10000000;
+    CHECK(birriasdr_get_tuner_bandwidth(&dev) == 10000000);
+    atomic_store(&dev.run_state, BS_RUNNING);
+    CHECK(birriasdr_set_tuner_bandwidth(&dev, 0) == BIRRIASDR_ERROR_BUSY);
+    atomic_store(&dev.run_state, BS_IDLE);
+    dev.backend = bs_lookup_id(0x0e8d, 0x7925)->backend;
+    CHECK(birriasdr_set_tuner_bandwidth(&dev, 0) == BIRRIASDR_ERROR_UNSUPPORTED);
+    CHECK(pthread_mutex_destroy(&dev.control_mutex) == 0);
+}
+
 /* Tests deliberately run without a dongle, root privileges or vendor firmware. */
 int main(void)
 {
@@ -468,6 +504,7 @@ int main(void)
     test_tuner_gain();
     test_agc_step();
     test_freq_correction();
+    test_bandwidth();
     puts("core tests passed");
     return 0;
 }

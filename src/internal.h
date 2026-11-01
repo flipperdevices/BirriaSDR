@@ -39,6 +39,11 @@ struct bs_agc_state {
     unsigned hold, wait, lock;
 };
 
+/* A receive filter width, in Hz, measured clean at one sample rate. */
+struct bs_filter {
+    uint32_t rate, width;
+};
+
 /* One contiguous tuning interval; backends list them in ascending order. A band
  * without a measured gain table leaves calibrated gain UNSUPPORTED there.
  */
@@ -57,6 +62,11 @@ struct bs_backend {
     unsigned band_count;
     /* Digital gain codes the AGC may use, one bit per code; 0 allows all. */
     uint16_t agc_digital;
+    /* Receive filters each rate can use, by rate then width ascending; NULL means
+     * the rate's span only.
+     */
+    const struct bs_filter *filters;
+    unsigned filter_count;
     uint32_t default_rate;
     int (*validate)(uint64_t frequency, uint32_t rate, const struct birriasdr_gain *gain);
     int (*identify)(birriasdr_dev_t *);
@@ -106,6 +116,7 @@ struct birriasdr_dev {
     unsigned usb_burst;  /* endpoint burst to program; 0 for BIRRIA_BURST or the ROM's */
     char cpus[64];       /* CPU list for the library's threads, when cpus_set */
     bool cpus_set;       /* else BIRRIA_CPUS applies */
+    uint32_t bandwidth; /* requested filter width in Hz; 0 matches the rate */
     bool manual;
     /* Automatic mode runs the host AGC, keeping the codes forced, instead of
      * releasing them to the chip.
@@ -184,6 +195,26 @@ int bs_agc_next(struct bs_agc_state *state, int total, int top, uint64_t mean_sq
 void bs_agc_measure(birriasdr_dev_t *dev, const int16_t *iq, uint32_t count);
 void bs_agc_start(birriasdr_dev_t *dev);
 void bs_agc_stop(birriasdr_dev_t *dev);
+
+/* The filter a read uses: of those listed for the rate, the smallest at least
+ * the request, or the widest for no request or one wider than any. Without a
+ * list, or none for the rate, the rate's span.
+ */
+static inline uint32_t bs_filter_width(const birriasdr_dev_t *dev)
+{
+    uint32_t widest = 0;
+    if (!dev->backend || !dev->backend->filters)
+        return dev->rate;
+    for (unsigned i = 0; i < dev->backend->filter_count; ++i) {
+        const struct bs_filter *f = &dev->backend->filters[i];
+        if (f->rate != dev->rate)
+            continue;
+        if (dev->bandwidth && f->width >= dev->bandwidth)
+            return f->width;
+        widest = f->width;
+    }
+    return widest ? widest : dev->rate;
+}
 
 extern const struct bs_backend bs_mt7921_backend;
 extern const struct bs_backend bs_mt7925_backend;

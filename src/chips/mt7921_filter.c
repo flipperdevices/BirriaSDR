@@ -96,7 +96,7 @@ static const struct filter_field {
 static const uint32_t profile40_fields = FIELD_BIT(FIELD_ANALOG0) | FIELD_BIT(FIELD_ANALOG1) |
                                          FIELD_BIT(FIELD_DIGITAL0) | FIELD_BIT(FIELD_DIGITAL1);
 
-/* The fields one rate owns, as a bit mask over fields[]. The 40 MSps profile
+/* The fields one profile owns, as a bit mask over fields[]. The 40 MHz profile
  * keeps its original four fields. The other rates own all twelve, writing zero
  * to the ones they do not use, so a field left set by an earlier run cannot
  * change their profile. 10 MSps is the 20 MHz profile plus
@@ -107,7 +107,7 @@ static const uint32_t profile40_fields = FIELD_BIT(FIELD_ANALOG0) | FIELD_BIT(FI
  */
 static uint32_t rate_fields(const birriasdr_dev_t *dev)
 {
-    if (dev->rate == 40000000)
+    if (bs_filter_width(dev) == 40000000)
         return profile40_fields;
     return (1u << FIELD_COUNT) - 1u;
 }
@@ -132,17 +132,19 @@ static uint32_t nearest_channel(uint64_t frequency)
     return best;
 }
 
-/* The value a rate writes to one field. At 10 and 20 MSps the channel field
- * gets the 2.4 GHz channel number nearest the requested center, as the vendor
- * writes for a 20 MHz channel. The field is set once per startup and not
- * changed by live retunes, because its effect is not decoded.
+/* The value a profile writes to one field; the profile is the rate's unless
+ * set_tuner_bandwidth chose a narrower one. With the 10 and 20 MHz profiles the
+ * channel field gets the 2.4 GHz channel number nearest the requested center,
+ * as the vendor writes for a 20 MHz channel. The field is set once per startup
+ * and not changed by live retunes, because its effect is not decoded.
  */
 static uint32_t field_value(const birriasdr_dev_t *dev, unsigned field)
 {
     const struct filter_field *f = &fields[field];
-    if (mt_rate_packed(dev->rate) && field == FIELD_CHANNEL)
+    uint32_t width = bs_filter_width(dev);
+    if (width <= 20000000 && field == FIELD_CHANNEL)
         return nearest_channel(dev->frequency) << 4;
-    switch (dev->rate) {
+    switch (width) {
     case 10000000:
         return f->value10;
     case 20000000:

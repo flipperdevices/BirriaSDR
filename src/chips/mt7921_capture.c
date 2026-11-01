@@ -187,6 +187,15 @@ static const struct birriasdr_gain_table gain_5g = {
     .lna_count = 6, .lpf_count = 9, .digital_count = 13
 };
 
+/* The profiles of mt7921_filter.c each rate can use. Measured on noise, the
+ * 40 MHz profile at 80 MSps and the 20 MHz one at 40 MSps fall off cleanly;
+ * the others below the span rise again further out, folding images in.
+ */
+static const struct bs_filter filters[] = {
+    {10000000, 10000000}, {20000000, 20000000}, {40000000, 20000000},
+    {40000000, 40000000}, {80000000, 40000000}, {80000000, 80000000}
+};
+
 static const struct bs_band bands[] = {
     {MT_RF_MIN_HZ, MT_RF_MAX_HZ, &gain_2g}, {MT_RF_5G_MIN_HZ, MT_RF_5G_MAX_HZ, &gain_5g}
 };
@@ -196,12 +205,14 @@ const struct bs_backend bs_mt7921_backend = {
     .name = "MT7961/MT7972",
     .capabilities = BIRRIASDR_CAP_RX | BIRRIASDR_CAP_RAW_GAIN | BIRRIASDR_CAP_GAIN_DB |
                     BIRRIASDR_CAP_AGC | BIRRIASDR_CAP_LIVE_GAIN | BIRRIASDR_CAP_TUNING |
-                    BIRRIASDR_CAP_LIVE_TUNING | BIRRIASDR_CAP_FREQ_CORRECTION,
+                    BIRRIASDR_CAP_LIVE_TUNING | BIRRIASDR_CAP_FREQ_CORRECTION |
+                    BIRRIASDR_CAP_FILTER,
     .default_frequency = MT_RF_ANCHOR_HZ,
     .min_frequency = MT_RF_MIN_HZ, .max_frequency = MT_RF_5G_MAX_HZ,
     .bands = bands, .band_count = sizeof(bands) / sizeof(bands[0]),
     /* Digital codes other than 0 and 6 truncate, leaving I and Q up to 2 low. */
     .agc_digital = 1u << 0 | 1u << 6,
+    .filters = filters, .filter_count = sizeof(filters) / sizeof(filters[0]),
     .default_rate = 40000000,
     .validate = validate,
     .identify = identify,
