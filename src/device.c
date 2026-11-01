@@ -86,6 +86,7 @@ int birriasdr_open(birriasdr_dev_t **out, uint32_t index)
         free(dev);
         return result;
     }
+    dev->host_agc = (dev->backend->capabilities & BIRRIASDR_CAP_AGC) != 0;
     *out = dev;
     return 0;
 }
@@ -274,8 +275,7 @@ const char *birriasdr_get_cpus(const birriasdr_dev_t *dev)
  * A failed live update stops this acquisition. Its error reaches either the
  * recovery callback or, if no restart succeeds, the read caller.
  */
-static int set_gain_locked(birriasdr_dev_t *dev, bool manual,
-                           const struct birriasdr_gain *gain)
+int bs_set_gain_locked(birriasdr_dev_t *dev, bool manual, const struct birriasdr_gain *gain)
 {
     unsigned state = atomic_load(&dev->run_state);
     if (state != BS_IDLE && (state != BS_RUNNING || !dev->control_ready))
@@ -288,7 +288,7 @@ static int set_gain_locked(birriasdr_dev_t *dev, bool manual,
         if (!(dev->backend->capabilities & BIRRIASDR_CAP_LIVE_GAIN) ||
             !dev->backend->change_gain)
             return BIRRIASDR_ERROR_UNSUPPORTED;
-        result = dev->backend->change_gain(dev, manual, gain);
+        result = dev->backend->change_gain(dev, manual || dev->host_agc, gain);
         if (result < 0) {
             control_failed(dev, result, BIRRIASDR_STAGE_GAIN);
             return result;
@@ -309,7 +309,7 @@ int birriasdr_set_tuner_gain_mode(birriasdr_dev_t *dev, int manual)
     if (!dev || (manual != 0 && manual != 1))
         return BIRRIASDR_ERROR_INVALID;
     pthread_mutex_lock(&dev->control_mutex);
-    result = set_gain_locked(dev, manual != 0, &dev->gain);
+    result = bs_set_gain_locked(dev, manual != 0, &dev->gain);
     pthread_mutex_unlock(&dev->control_mutex);
     return result;
 }
@@ -329,7 +329,7 @@ int birriasdr_set_gain_codes(birriasdr_dev_t *dev, const struct birriasdr_gain *
     else if (!dev->manual)
         result = BIRRIASDR_ERROR_STATE;
     else
-        result = set_gain_locked(dev, true, gain);
+        result = bs_set_gain_locked(dev, true, gain);
     pthread_mutex_unlock(&dev->control_mutex);
     return result;
 }
@@ -356,7 +356,7 @@ static int unsupported_control(birriasdr_dev_t *dev)
 }
 
 /* The measured table of the band holding the center, or NULL where none exists. */
-static const struct birriasdr_gain_table *band_gain(const birriasdr_dev_t *dev)
+const struct birriasdr_gain_table *bs_band_gain(const birriasdr_dev_t *dev)
 {
     uint64_t frequency = atomic_load(&dev->frequency);
     for (unsigned i = 0; dev->backend->bands && i < dev->backend->band_count; ++i) {
@@ -367,7 +367,7 @@ static const struct birriasdr_gain_table *band_gain(const birriasdr_dev_t *dev)
     return NULL;
 }
 
-static int total_gain(const struct birriasdr_gain_table *table, const struct birriasdr_gain *gain)
+int bs_total_gain(const struct birriasdr_gain_table *table, const struct birriasdr_gain *gain)
 {
     return table->lna[gain->lna] + table->lpf[gain->lpf] + table->digital[gain->digital];
 }
@@ -376,7 +376,7 @@ static int total_gain(const struct birriasdr_gain_table *table, const struct bir
  * filter code that fits best, then the nearest digital code for the rest. Of
  * filter codes with equal gain only the lowest is used.
  */
-static struct birriasdr_gain pick_codes(const struct birriasdr_gain_table *table, int tenths_db)
+struct birriasdr_gain bs_pick_codes(const struct birriasdr_gain_table *table, int tenths_db)
 {
     struct birriasdr_gain gain = {0, 0, 0};
     int rest;
@@ -400,7 +400,7 @@ int birriasdr_get_gain_table(const birriasdr_dev_t *dev, struct birriasdr_gain_t
     const struct birriasdr_gain_table *measured;
     if (!dev || !table)
         return BIRRIASDR_ERROR_INVALID;
-    if (!(dev->backend->capabilities & BIRRIASDR_CAP_GAIN_DB) || !(measured = band_gain(dev)))
+    if (!(dev->backend->capabilities & BIRRIASDR_CAP_GAIN_DB) || !(measured = bs_band_gain(dev)))
         return BIRRIASDR_ERROR_UNSUPPORTED;
     *table = *measured;
     return 0;
@@ -412,9 +412,9 @@ int birriasdr_tuner_gain_codes(const birriasdr_dev_t *dev, int tenths_db,
     const struct birriasdr_gain_table *table;
     if (!dev || !gain)
         return BIRRIASDR_ERROR_INVALID;
-    if (!(dev->backend->capabilities & BIRRIASDR_CAP_GAIN_DB) || !(table = band_gain(dev)))
+    if (!(dev->backend->capabilities & BIRRIASDR_CAP_GAIN_DB) || !(table = bs_band_gain(dev)))
         return BIRRIASDR_ERROR_UNSUPPORTED;
-    *gain = pick_codes(table, tenths_db);
+    *gain = bs_pick_codes(table, tenths_db);
     return 0;
 }
 
@@ -432,7 +432,7 @@ int birriasdr_set_tuner_gain(birriasdr_dev_t *dev, int tenths_db)
     else if (!dev->manual)
         result = BIRRIASDR_ERROR_STATE;
     else
-        result = set_gain_locked(dev, true, &gain);
+        result = bs_set_gain_locked(dev, true, &gain);
     pthread_mutex_unlock(&dev->control_mutex);
     return result;
 }
@@ -444,13 +444,13 @@ int birriasdr_get_tuner_gains(birriasdr_dev_t *dev, int *gains, size_t capacity)
     int count = 0, last = -1, top;
     if (!dev)
         return BIRRIASDR_ERROR_INVALID;
-    if (!(dev->backend->capabilities & BIRRIASDR_CAP_GAIN_DB) || !(table = band_gain(dev)))
+    if (!(dev->backend->capabilities & BIRRIASDR_CAP_GAIN_DB) || !(table = bs_band_gain(dev)))
         return BIRRIASDR_ERROR_UNSUPPORTED;
     top = table->lna[table->lna_count - 1] + table->lpf[table->lpf_count - 1] +
           table->digital[table->digital_count - 1];
     for (int request = 0; request <= top + 9; request += 10) {
-        struct birriasdr_gain gain = pick_codes(table, request);
-        int total = total_gain(table, &gain);
+        struct birriasdr_gain gain = bs_pick_codes(table, request);
+        int total = bs_total_gain(table, &gain);
         if (total <= last)
             continue;
         if (gains && (size_t)count < capacity)
@@ -461,11 +461,23 @@ int birriasdr_get_tuner_gains(birriasdr_dev_t *dev, int *gains, size_t capacity)
     return count;
 }
 
-/* TODO: identify every relevant AGC loop and validate a complete freeze/release. */
+/* Choose what automatic mode means, and reapply the current mode under it. */
 int birriasdr_set_agc_mode(birriasdr_dev_t *dev, int enabled)
 {
-    (void)enabled;
-    return unsupported_control(dev);
+    bool before;
+    int result;
+    if (!dev || (enabled != 0 && enabled != 1))
+        return BIRRIASDR_ERROR_INVALID;
+    if (!(dev->backend->capabilities & BIRRIASDR_CAP_AGC))
+        return BIRRIASDR_ERROR_UNSUPPORTED;
+    pthread_mutex_lock(&dev->control_mutex);
+    before = dev->host_agc;
+    dev->host_agc = enabled != 0;
+    result = bs_set_gain_locked(dev, dev->manual, &dev->gain);
+    if (result < 0)
+        dev->host_agc = before;
+    pthread_mutex_unlock(&dev->control_mutex);
+    return result;
 }
 
 /* TODO: independently selectable filter widths and calibrated RF response.

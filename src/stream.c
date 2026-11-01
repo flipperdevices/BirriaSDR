@@ -31,6 +31,7 @@ static void flush_samples(struct delivery *delivery)
 {
     if (!delivery->used)
         return;
+    bs_agc_measure(delivery->dev, delivery->iq, delivery->used);
     delivery->callback(delivery->iq, delivery->used, delivery->delivered, delivery->context);
     delivery->delivered += delivery->used;
     delivery->dev->stats.samples = delivery->delivered - delivery->segment_start;
@@ -402,6 +403,7 @@ static int stream_pinned(birriasdr_dev_t *dev, birriasdr_read_async_cb_t callbac
                                 .capacity = buffer_samples};
     delivery.iq = calloc((size_t)buffer_samples * 2, sizeof(*delivery.iq));
     bytes = malloc(BS_USB_BYTES);
+    bs_agc_start(dev);
     if (delivery.iq && bytes) {
         for (;;) {
             bool can_retry;
@@ -425,6 +427,7 @@ static int stream_pinned(birriasdr_dev_t *dev, birriasdr_read_async_cb_t callbac
     if (!packets && dev->recovery_limit && dev->recovery_callback &&
         atomic_load(&dev->run_state) == BS_CANCELLING && clean_overrun(dev, result))
         result = 0;
+    bs_agc_stop(dev);
     dev->stats.samples = delivery.delivered;
     dev->stats.packets = total_packets;
     dev->stats.usb_bytes = total_bytes;

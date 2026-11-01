@@ -30,6 +30,15 @@ struct bs_io {
     int (*write32)(void *, enum bs_space, uint32_t, uint32_t);
 };
 
+/* The AGC's own state: the target total (negative until the first tick), the
+ * ceiling a clip set and the ticks it still holds, the ticks left before the
+ * next slow rise, and those before a fast climb is allowed again after a clip.
+ */
+struct bs_agc_state {
+    int target, ceiling;
+    unsigned hold, wait, lock;
+};
+
 /* One contiguous tuning interval; backends list them in ascending order. A band
  * without a measured gain table leaves calibrated gain UNSUPPORTED there.
  */
@@ -95,7 +104,19 @@ struct birriasdr_dev {
     char cpus[64];       /* CPU list for the library's threads, when cpus_set */
     bool cpus_set;       /* else BIRRIA_CPUS applies */
     bool manual;
+    /* Automatic mode runs the host AGC, keeping the codes forced, instead of
+     * releasing them to the chip.
+     */
+    bool host_agc;
     struct birriasdr_gain gain;
+    struct {
+        atomic_uint_fast64_t power, count;
+        atomic_int peak;
+        atomic_bool stop;
+        pthread_t thread;
+        bool running;
+        struct bs_agc_state state; /* used by the AGC thread only */
+    } agc;
     uint32_t nonce;
     uint8_t command_sequence;
     bool touched;
@@ -126,6 +147,34 @@ struct bs_framer {
     bs_gap_fn gap;
     void *context;
 };
+
+/* Host AGC window as RMS of I or Q (-30 and -12 dB of full scale), step in tenths
+ * of a dB, and the sample level that cuts gain at once; fpv-scanner's values.
+ */
+#define BS_AGC_LOW 250
+#define BS_AGC_HIGH 2000
+#define BS_AGC_STEP 60
+#define BS_AGC_CLIP 7500
+/* Fast attack, hold, slow decay, in 20 ms ticks and tenths of a dB: after a clip
+ * the gain stays at or below where the attack put it for 500 ms, counted again
+ * from each clip; below the window it climbs 1 dB every 100 ms, and more than
+ * 12 dB below it 6 dB a tick, but not within 2 s of a clip, so the gaps between
+ * bursts do not set off a fast climb.
+ */
+#define BS_AGC_HOLD_TICKS 25
+#define BS_AGC_LOCK_TICKS 100
+#define BS_AGC_RISE 10
+#define BS_AGC_RISE_TICKS 5
+
+
+const struct birriasdr_gain_table *bs_band_gain(const birriasdr_dev_t *dev);
+int bs_total_gain(const struct birriasdr_gain_table *table, const struct birriasdr_gain *gain);
+struct birriasdr_gain bs_pick_codes(const struct birriasdr_gain_table *table, int tenths_db);
+int bs_set_gain_locked(birriasdr_dev_t *dev, bool manual, const struct birriasdr_gain *gain);
+int bs_agc_next(struct bs_agc_state *state, int total, int top, uint64_t mean_square, int peak);
+void bs_agc_measure(birriasdr_dev_t *dev, const int16_t *iq, uint32_t count);
+void bs_agc_start(birriasdr_dev_t *dev);
+void bs_agc_stop(birriasdr_dev_t *dev);
 
 extern const struct bs_backend bs_mt7921_backend;
 extern const struct bs_backend bs_mt7925_backend;

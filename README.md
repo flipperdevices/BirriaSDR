@@ -82,7 +82,7 @@ For more detail, see:
 | Transmit | None, receive only |
 | Gain | Calibrated in dB from a measured table: 0 to 46 dB at 2.4 GHz and 0 to 39.5 dB at 5 GHz, within about 1 dB on the tested board. Raw codes for LNA 0 to 5, filter stage 0 to 8 and digital 0 to 12 stay available |
 | Live gain changes | Supported without restarting capture, with a brief settling transient |
-| Automatic gain | Manual overrides can be released. Full AGC control is not implemented |
+| Automatic gain | The library's AGC keeps the level between about -30 and -12 dBFS using the measured gain table, LNA first. Releasing the overrides to the chip instead stays available |
 | Frequency accuracy | Uncalibrated, with no ppm correction |
 | Reference clock | On-board 40 MHz crystal |
 | Host interface | Bulk transfers over USB 3.0 at about 80 MB/s at 10 MSps, 161 MB/s at 20 and 40 MSps and 322 MB/s at 80 MSps |

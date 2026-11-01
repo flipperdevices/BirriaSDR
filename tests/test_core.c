@@ -231,7 +231,9 @@ static void test_api(void)
     CHECK(id && id->backend->chipset == BIRRIASDR_CHIP_MT7925 && !id->qualified);
     CHECK(id->backend->prepare(&dev, 0) == BIRRIASDR_ERROR_UNSUPPORTED);
     CHECK(birriasdr_set_tuner_gain(&dev, 100) == BIRRIASDR_ERROR_STATE);
-    CHECK(birriasdr_set_agc_mode(&dev, 1) == BIRRIASDR_ERROR_UNSUPPORTED);
+    CHECK(birriasdr_set_agc_mode(&dev, 2) == BIRRIASDR_ERROR_INVALID);
+    CHECK(birriasdr_set_agc_mode(&dev, 1) == 0 && dev.host_agc);
+    CHECK(birriasdr_set_agc_mode(&dev, 0) == 0 && !dev.host_agc);
     CHECK(birriasdr_set_tuner_bandwidth(&dev, 40000000) == BIRRIASDR_ERROR_UNSUPPORTED);
     CHECK(birriasdr_set_center_freq(&dev, UINT64_C(3000000000)) == BIRRIASDR_ERROR_UNSUPPORTED);
     CHECK(birriasdr_set_center_freq(&dev, UINT64_C(4499999999)) == BIRRIASDR_ERROR_UNSUPPORTED);
@@ -381,6 +383,49 @@ static void test_tuner_gain(void)
     CHECK(pthread_mutex_destroy(&dev.control_mutex) == 0);
 }
 
+/* Fast attack, hold, slow decay: 6 dB down at once above the window or on a
+ * clip, which also caps the target for 25 ticks from the last clip; 1 dB up
+ * every 5 ticks below the window and 6 dB a tick far below it, but not within
+ * 100 ticks of a clip; nothing inside it; always within the table.
+ */
+static void test_agc_step(void)
+{
+    struct bs_agc_state s = {-1, 0, 0, 0, 0};
+    const uint64_t quiet = 249 * 249, inside = 1000 * 1000, loud = 2001 * 2001;
+    CHECK(bs_agc_next(&s, 200, 464, inside, 3000) == 200);
+    CHECK(bs_agc_next(&s, 200, 464, 250 * 250, 1000) == 200);
+    CHECK(bs_agc_next(&s, 200, 464, 2000 * 2000, 6000) == 200);
+    CHECK(bs_agc_next(&s, 200, 464, loud, 6000) == 140);
+    CHECK(bs_agc_next(&s, 140, 464, quiet, 1000) == 150);
+    for (int i = 0; i < 4; ++i)
+        CHECK(bs_agc_next(&s, 140, 464, quiet, 1000) == 150);
+    CHECK(bs_agc_next(&s, 140, 464, quiet, 1000) == 160);
+    CHECK(bs_agc_next(&s, 300, 464, inside, BS_AGC_CLIP) == 240);
+    CHECK(s.ceiling == 240 && s.hold == BS_AGC_HOLD_TICKS);
+    for (int i = 0; i < BS_AGC_HOLD_TICKS; ++i)
+        CHECK(bs_agc_next(&s, 240, 464, quiet, 1000) == 240);
+    CHECK(s.hold == 0);
+    for (int i = 0; i < BS_AGC_RISE_TICKS; ++i)
+        bs_agc_next(&s, 240, 464, quiet, 1000);
+    CHECK(s.target == 250);
+    CHECK(bs_agc_next(&s, 250, 464, quiet, BS_AGC_CLIP) == 190 && s.hold == BS_AGC_HOLD_TICKS);
+    CHECK(bs_agc_next(&s, 190, 464, loud, 1000) == 130);
+    struct bs_agc_state low = {-1, 0, 0, 0, 0}, high = {-1, 0, 0, 0, 0}, far = {-1, 0, 0, 0, 0};
+    CHECK(bs_agc_next(&low, 30, 464, 3000 * 3000, 8191) == 0);
+    CHECK(bs_agc_next(&high, 460, 464, 10, 100) == 464);
+    CHECK(bs_agc_next(&far, 60, 464, 50 * 50, 100) == 120);
+    CHECK(bs_agc_next(&far, 120, 464, 50 * 50, 100) == 180);
+    CHECK(bs_agc_next(&far, 180, 464, 50 * 50, BS_AGC_CLIP) == 120);
+    CHECK(bs_agc_next(&far, 120, 464, 50 * 50, 100) == 120);
+    for (int i = 0; i < BS_AGC_LOCK_TICKS - 2; ++i)
+        CHECK(bs_agc_next(&far, far.target, 464, 50 * 50, 100) <= 120 + 10 * (i / 5 + 1));
+    CHECK(far.lock == 1 && far.hold == 0);
+    int slow = far.target;
+    bs_agc_next(&far, slow, 464, 50 * 50, 100);
+    CHECK(far.lock == 0 && bs_agc_next(&far, far.target, 464, 50 * 50, 100) == far.target);
+    CHECK(far.target >= slow + 60);
+}
+
 /* Tests deliberately run without a dongle, root privileges or vendor firmware. */
 int main(void)
 {
@@ -393,6 +438,7 @@ int main(void)
     test_image();
     test_api();
     test_tuner_gain();
+    test_agc_step();
     puts("core tests passed");
     return 0;
 }

@@ -253,8 +253,11 @@ int birriasdr_set_cpus(birriasdr_dev_t *dev, const char *list);
 /** The CPU list in effect, from the setting or BIRRIA_CPUS; "" when unpinned. */
 const char *birriasdr_get_cpus(const birriasdr_dev_t *dev);
 
-/** Set gain mode: 1 forces the documented gain indices, 0 releases overrides.
- * Releasing overrides is not a claim of complete closed-loop AGC control.
+/** Set gain mode: 1 forces the requested indices, 0 is automatic. With CAP_AGC
+ * automatic mode runs the library's AGC by default (see set_agc_mode), which
+ * keeps the indices forced and moves them; get_gain_codes reports its choice.
+ * Otherwise automatic mode releases the overrides to the chip, which is not a
+ * claim of complete closed-loop AGC control.
  * While idle, settings apply at the next read. With CAP_LIVE_GAIN, a running
  * capture changes registers synchronously without rebooting or stopping ICAP.
  * Calls serialize with startup/cleanup; BUSY means no live control window is
@@ -304,8 +307,14 @@ int birriasdr_tuner_gain_codes(const birriasdr_dev_t *dev, int tenths_db,
  */
 int birriasdr_get_tuner_gains(birriasdr_dev_t *dev, int *gains, size_t capacity);
 
-/** Reserved: global AGC enable/freeze. UNSUPPORTED because only individual
- * force fields are established; use tuner_gain_mode for those overrides.
+/** Choose what automatic gain mode does, with CAP_AGC. 1, the default, runs the
+ * library's AGC on the measured gain, LNA first, keeping the RMS level between
+ * about -30 and -12 dB of full scale: 6 dB down at once when the level is above
+ * that or a sample nears full scale, which also holds the gain there for
+ * 500 ms after the last such sample; below it, 1 dB up every 100 ms, and more
+ * than 12 dB below it 6 dB every 20 ms, except within 2 s of such a sample. 0 releases the overrides
+ * to the chip instead. Bands without a measured table leave the codes as they
+ * are under 1. Same idle/live rules as set_tuner_gain_mode.
  */
 int birriasdr_set_agc_mode(birriasdr_dev_t *dev, int enabled);
 

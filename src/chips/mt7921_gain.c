@@ -139,7 +139,7 @@ int mt_apply_gain(birriasdr_dev_t *dev)
         return BIRRIASDR_ERROR_STATE;
     memcpy(dev->mt7921.gain_baseline, before, sizeof(before));
     dev->mt7921.gain_saved = true;
-    return dev->manual ? gain_transaction(dev, before, values, true) : 0;
+    return dev->manual || dev->host_agc ? gain_transaction(dev, before, values, true) : 0;
 }
 
 /* Change gain on an initialized receiver without stopping ICAP or rebooting.

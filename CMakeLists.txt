@@ -19,7 +19,7 @@ include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(LIBUSB REQUIRED_VARS LIBUSB_LIBRARY LIBUSB_INCLUDE_DIR)
 
 set(BIRRIASDR_SOURCES
-    src/device.c src/io.c src/usb.c src/usb_stream.c src/stream.c
+    src/device.c src/io.c src/usb.c src/usb_stream.c src/stream.c src/agc.c
     src/chips/mt7921_boot.c src/chips/mt7921_rf.c src/chips/mt7921_tune.c src/chips/mt7921_gain.c
     src/chips/mt7921_capture.c src/chips/mt7921_filter.c src/chips/mt7921_frame.c src/chips/mt7925.c)
 add_library(birriasdr_objects OBJECT ${BIRRIASDR_SOURCES})
@@ -91,13 +91,13 @@ if(BUILD_TESTING)
         target_link_options(test_usb_stream PRIVATE -Wl,--wrap=malloc -Wl,--wrap=calloc)
     endif()
     add_test(NAME usb_lifecycle COMMAND test_usb_stream)
-    add_executable(test_stream tests/test_stream.c src/device.c src/stream.c src/io.c src/chips/mt7921_frame.c)
+    add_executable(test_stream tests/test_stream.c src/device.c src/stream.c src/agc.c src/io.c src/chips/mt7921_frame.c)
     target_compile_features(test_stream PRIVATE c_std_11)
     target_compile_definitions(test_stream PRIVATE _POSIX_C_SOURCE=200809L)
     target_include_directories(test_stream PRIVATE include src ${LIBUSB_INCLUDE_DIR})
     target_link_libraries(test_stream PRIVATE Threads::Threads)
     add_test(NAME stream_lifecycle COMMAND test_stream)
-    add_executable(test_stream_rollover tests/test_stream_rollover.c src/device.c src/io.c src/chips/mt7921_frame.c)
+    add_executable(test_stream_rollover tests/test_stream_rollover.c src/device.c src/agc.c src/io.c src/chips/mt7921_frame.c)
     target_compile_features(test_stream_rollover PRIVATE c_std_11)
     target_compile_definitions(test_stream_rollover PRIVATE _POSIX_C_SOURCE=200809L)
     target_include_directories(test_stream_rollover PRIVATE include src ${LIBUSB_INCLUDE_DIR})
