@@ -342,28 +342,28 @@ static void test_tuner_gain(void)
     dev.rate = dev.backend->default_rate;
     CHECK(birriasdr_get_capabilities(&dev) & BIRRIASDR_CAP_GAIN_DB);
     CHECK(birriasdr_get_gain_table(&dev, &table) == 0);
-    CHECK(table.lna_count == 6 && table.lna[5] == 304 && table.lpf[8] == 40);
+    CHECK(table.lna_count == 6 && table.lna[5] == 300 && table.lpf[8] == 40);
     CHECK(table.digital_count == 13 && table.digital[12] == 120);
     count = birriasdr_get_tuner_gains(&dev, NULL, 0);
     CHECK(count > 30 && count <= 64);
     CHECK(birriasdr_get_tuner_gains(&dev, gains, 64) == count);
-    CHECK(gains[0] == 0 && gains[count - 1] == 304 + 40 + 120);
+    CHECK(gains[0] == 0 && gains[count - 1] == 300 + 40 + 120);
     CHECK(birriasdr_set_tuner_gain_mode(&dev, 1) == 0 && birriasdr_set_tuner_gain(&dev, 400) == 0);
     CHECK(birriasdr_get_gain_codes(&dev, &gain, &manual) == 0);
     CHECK(gain.lna == 5 && gain.lpf == 8 && gain.digital == 6);
     CHECK(birriasdr_set_tuner_gain_mode(&dev, 0) == 0);
     for (int i = 1; i < count; ++i)
-        CHECK(gains[i] > gains[i - 1] && gains[i] - gains[i - 1] <= 16);
+        CHECK(gains[i] == gains[i - 1] + 10);
     CHECK(birriasdr_get_tuner_gains(&dev, gains, 3) == count);
     gain = bs_pick_codes(&table, 400, 1u << 0 | 1u << 6);
     CHECK(gain.lna == 5 && gain.lpf == 8 && gain.digital == 6);
     gain = bs_pick_codes(&table, 350, 1u << 0 | 1u << 6);
     CHECK(gain.lna == 5 && gain.lpf == 8 && gain.digital == 0);
-    CHECK(birriasdr_tuner_gain_codes(&dev, 200, &gain) == 0);
+    CHECK(birriasdr_tuner_gain_codes(&dev, 210, &gain) == 0);
     CHECK(gain.lna == 3 && gain.lpf == 0 && gain.digital == 0);
-    CHECK(birriasdr_set_tuner_gain(&dev, 200) == BIRRIASDR_ERROR_STATE);
+    CHECK(birriasdr_set_tuner_gain(&dev, 210) == BIRRIASDR_ERROR_STATE);
     CHECK(birriasdr_set_tuner_gain_mode(&dev, 1) == 0);
-    CHECK(birriasdr_set_tuner_gain(&dev, 200) == 0);
+    CHECK(birriasdr_set_tuner_gain(&dev, 210) == 0);
     CHECK(birriasdr_get_gain_codes(&dev, &gain, &manual) == 0 && manual);
     CHECK(gain.lna == 3 && gain.lpf == 0 && gain.digital == 0);
     CHECK(birriasdr_set_tuner_gain(&dev, 250) == 0);
@@ -376,8 +376,8 @@ static void test_tuner_gain(void)
     CHECK(birriasdr_get_gain_codes(&dev, &gain, &manual) == 0);
     CHECK(gain.lna == 5 && gain.lpf == 8 && gain.digital == 12);
     CHECK(birriasdr_set_center_freq(&dev, UINT64_C(5785000000)) == 0);
-    CHECK(birriasdr_get_gain_table(&dev, &table) == 0 && table.lna[5] == 235);
-    CHECK(birriasdr_set_tuner_gain(&dev, 235) == 0);
+    CHECK(birriasdr_get_gain_table(&dev, &table) == 0 && table.lna[5] == 240);
+    CHECK(birriasdr_set_tuner_gain(&dev, 240) == 0);
     CHECK(birriasdr_get_gain_codes(&dev, &gain, &manual) == 0);
     CHECK(gain.lna == 5 && gain.lpf == 0 && gain.digital == 0);
     dev.backend = bs_lookup_id(0x0e8d, 0x7925)->backend;
@@ -490,6 +490,30 @@ static void test_bandwidth(void)
     CHECK(pthread_mutex_destroy(&dev.control_mutex) == 0);
 }
 
+/* The chain is chosen while idle, within the backend's count, and needs the
+ * capability.
+ */
+static void test_antenna(void)
+{
+    birriasdr_dev_t dev = {0};
+    atomic_init(&dev.run_state, BS_IDLE);
+    CHECK(pthread_mutex_init(&dev.control_mutex, NULL) == 0);
+    dev.backend = &bs_mt7921_backend;
+    CHECK(birriasdr_get_capabilities(&dev) & BIRRIASDR_CAP_ANTENNA);
+    CHECK(birriasdr_get_antenna_count(&dev) == 2 && birriasdr_get_antenna(&dev) == 0);
+    CHECK(birriasdr_set_antenna(&dev, 1) == 0 && birriasdr_get_antenna(&dev) == 1);
+    CHECK(birriasdr_set_antenna(&dev, 2) == BIRRIASDR_ERROR_INVALID);
+    CHECK(birriasdr_get_antenna(&dev) == 1);
+    atomic_store(&dev.run_state, BS_RUNNING);
+    CHECK(birriasdr_set_antenna(&dev, 0) == BIRRIASDR_ERROR_BUSY);
+    atomic_store(&dev.run_state, BS_IDLE);
+    CHECK(birriasdr_set_antenna(&dev, 0) == 0);
+    dev.backend = bs_lookup_id(0x0e8d, 0x7925)->backend;
+    CHECK(birriasdr_set_antenna(&dev, 0) == BIRRIASDR_ERROR_UNSUPPORTED);
+    CHECK(birriasdr_get_antenna_count(&dev) == 1);
+    CHECK(pthread_mutex_destroy(&dev.control_mutex) == 0);
+}
+
 /* Tests deliberately run without a dongle, root privileges or vendor firmware. */
 int main(void)
 {
@@ -505,6 +529,7 @@ int main(void)
     test_agc_step();
     test_freq_correction();
     test_bandwidth();
+    test_antenna();
     puts("core tests passed");
     return 0;
 }

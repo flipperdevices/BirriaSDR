@@ -100,10 +100,12 @@ int mt_configure_capture(birriasdr_dev_t *dev)
     BS_TRY(bs_update32(dev, BS_MMIO, 0x830ad440, 0xff, 0x80000013));
     /* Bits 19:18 select the tap rate, 40 MSps << (3 - m): 3 for 40 MSps, 2 for
      * 80 MSps. 20 and 10 MSps use the 80 and 40 MSps taps with the packer
-     * above, which keeps one sample in four. Tap 4 (bits 11:8) is unchanged.
+     * above, which keeps one sample in four. Bits 11:8 pick the chain: tap 4
+     * for chain 0, 5 for chain 1.
      */
     BS_TRY(bs_update32(dev, BS_MMIO, 0x830ad448, 0x0fffffff,
-                        mt_rate_fast_tap(dev->rate) ? 0x00880400 : 0x008c0400));
+                        (mt_rate_fast_tap(dev->rate) ? 0x00880000 : 0x008c0000) |
+                        (4u + dev->antenna) << 8));
     BS_TRY(verify_rate_bits(dev, 0x830ad448, 0xc0000,
                             mt_rate_fast_tap(dev->rate) ? 0x80000 : 0xc0000));
     BS_TRY(bs_update32(dev, BS_MMIO, 0x88009004, 0, 0x0f000000));
@@ -169,19 +171,20 @@ static int identify(birriasdr_dev_t *dev)
     return (chip & 0xffff) == 0x7961 ? 0 : BIRRIASDR_ERROR_UNSUPPORTED;
 }
 
-/* Measured on one board against another Flipper One's test packets at 2472 and
- * 5785 MHz, noise subtracted, about 1 dB accuracy. Filter codes 0..6 measured
- * the same; the digital stage is 1 dB per code in both bands.
+/* Measured against another Flipper One's test packets at 2472 and 5785 MHz,
+ * noise subtracted: chain 0 on two boards and chain 1 on one, averaged and
+ * rounded to whole dB, each measurement within 1.1 dB. Filter codes 0..6
+ * measured the same; the digital stage is 1 dB per code in both bands.
  */
 static const struct birriasdr_gain_table gain_2g = {
-    .lna = {0, 58, 116, 200, 238, 304},
+    .lna = {0, 60, 120, 210, 240, 300},
     .lpf = {0, 0, 0, 0, 0, 0, 0, 20, 40},
     .digital = {0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120},
     .lna_count = 6, .lpf_count = 9, .digital_count = 13
 };
 
 static const struct birriasdr_gain_table gain_5g = {
-    .lna = {0, 60, 106, 120, 179, 235},
+    .lna = {0, 60, 110, 130, 190, 240},
     .lpf = {0, 0, 0, 0, 0, 0, 0, 20, 40},
     .digital = {0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120},
     .lna_count = 6, .lpf_count = 9, .digital_count = 13
@@ -206,13 +209,14 @@ const struct bs_backend bs_mt7921_backend = {
     .capabilities = BIRRIASDR_CAP_RX | BIRRIASDR_CAP_RAW_GAIN | BIRRIASDR_CAP_GAIN_DB |
                     BIRRIASDR_CAP_AGC | BIRRIASDR_CAP_LIVE_GAIN | BIRRIASDR_CAP_TUNING |
                     BIRRIASDR_CAP_LIVE_TUNING | BIRRIASDR_CAP_FREQ_CORRECTION |
-                    BIRRIASDR_CAP_FILTER,
+                    BIRRIASDR_CAP_FILTER | BIRRIASDR_CAP_ANTENNA,
     .default_frequency = MT_RF_ANCHOR_HZ,
     .min_frequency = MT_RF_MIN_HZ, .max_frequency = MT_RF_5G_MAX_HZ,
     .bands = bands, .band_count = sizeof(bands) / sizeof(bands[0]),
     /* Digital codes other than 0 and 6 truncate, leaving I and Q up to 2 low. */
     .agc_digital = 1u << 0 | 1u << 6,
     .filters = filters, .filter_count = sizeof(filters) / sizeof(filters[0]),
+    .antenna_count = 2,
     .default_rate = 40000000,
     .validate = validate,
     .identify = identify,

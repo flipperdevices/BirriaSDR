@@ -67,6 +67,8 @@ struct bs_backend {
      */
     const struct bs_filter *filters;
     unsigned filter_count;
+    /* Receive chains a read can capture; 0 or 1 means only the first. */
+    unsigned antenna_count;
     uint32_t default_rate;
     int (*validate)(uint64_t frequency, uint32_t rate, const struct birriasdr_gain *gain);
     int (*identify)(birriasdr_dev_t *);
@@ -117,6 +119,7 @@ struct birriasdr_dev {
     char cpus[64];       /* CPU list for the library's threads, when cpus_set */
     bool cpus_set;       /* else BIRRIA_CPUS applies */
     uint32_t bandwidth; /* requested filter width in Hz; 0 matches the rate */
+    uint8_t antenna;    /* receive chain the next read captures */
     bool manual;
     /* Automatic mode runs the host AGC, keeping the codes forced, instead of
      * releasing them to the chip.
@@ -142,6 +145,7 @@ struct birriasdr_dev {
     bool usb_lost;
     struct {
         uint32_t gain_baseline[4];
+        unsigned gain_chain;
         bool gain_saved;
         uint32_t filter_baseline[12];
         uint32_t filter_fields;

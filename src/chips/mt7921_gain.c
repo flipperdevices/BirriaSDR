@@ -52,26 +52,39 @@
 static const uint32_t gain_addresses[] = {0x830000c4, 0x83000108, 0x83000150, 0x768};
 static const uint32_t gain_masks[] = {0xf7f7f707, 0x3f3f0000, 0x8070f000, 0xff800000};
 
+/* Chain 1 has the same three PHY words 0x10000 higher and its analog override on
+ * SPI 0, the companion bank, measured with its receiver switched on.
+ */
+static uint32_t field_address(unsigned chain, unsigned field)
+{
+    return field == 3 ? gain_addresses[3] : gain_addresses[field] + chain * 0x10000u;
+}
+
+static unsigned field_port(unsigned chain)
+{
+    return chain ? MT_SYNTH_PORT : MT_RX_PORT;
+}
+
 /* Three PHY words and one analog override together control the measured path.
  * Reading them as a group gives rollback state without copying unknown fields.
  */
-static int gain_snapshot(birriasdr_dev_t *dev, uint32_t values[4])
+static int gain_snapshot(birriasdr_dev_t *dev, unsigned chain, uint32_t values[4])
 {
     for (unsigned i = 0; i < 3; ++i)
-        BS_TRY(bs_read32(dev, BS_MMIO, gain_addresses[i], &values[i]));
-    return mt_rf_read(dev, MT_RX_PORT, gain_addresses[3], &values[3]);
+        BS_TRY(bs_read32(dev, BS_MMIO, field_address(chain, i), &values[i]));
+    return mt_rf_read(dev, field_port(chain), gain_addresses[3], &values[3]);
 }
 
-/* Restore only owned fields and verify them. The analog override uses SPI 1,
- * while the first three words are digital PHY MMIO for receive chain 0.
+/* Restore only owned fields and verify them. The analog override is on the
+ * chain's SPI bank, while the first three words are its digital PHY MMIO.
  */
-static int gain_write(birriasdr_dev_t *dev, unsigned field, uint32_t value)
+static int gain_write(birriasdr_dev_t *dev, unsigned chain, unsigned field, uint32_t value)
 {
     uint32_t actual;
-    uint32_t mask = gain_masks[field], address = gain_addresses[field];
+    uint32_t mask = gain_masks[field], address = field_address(chain, field);
     if (field == 3) {
-        BS_TRY(mt_rf_update(dev, MT_RX_PORT, address, mask, value & mask));
-        BS_TRY(mt_rf_read(dev, MT_RX_PORT, address, &actual));
+        BS_TRY(mt_rf_update(dev, field_port(chain), address, mask, value & mask));
+        BS_TRY(mt_rf_read(dev, field_port(chain), address, &actual));
     } else {
         BS_TRY(bs_update32(dev, BS_MMIO, address, mask, value & mask));
         BS_TRY(bs_read32(dev, BS_MMIO, address, &actual));
@@ -83,7 +96,7 @@ static int gain_write(birriasdr_dev_t *dev, unsigned field, uint32_t value)
  * update restores the immediately preceding settings, not the boot baseline.
  * The baseline remains saved separately for release and final reset cleanup.
  */
-static int gain_transaction(birriasdr_dev_t *dev, const uint32_t before[4],
+static int gain_transaction(birriasdr_dev_t *dev, unsigned chain, const uint32_t before[4],
                             const uint32_t values[4], bool manual)
 {
     static const unsigned order[] = {3, 1, 2, 0};
@@ -91,14 +104,14 @@ static int gain_transaction(birriasdr_dev_t *dev, const uint32_t before[4],
     const unsigned *sequence = manual ? order : restore;
     int result = 0;
     for (unsigned i = 0; i < 4; ++i) {
-        result = gain_write(dev, sequence[i], values[sequence[i]]);
+        result = gain_write(dev, chain, sequence[i], values[sequence[i]]);
         if (result < 0)
             break;
     }
     if (result < 0) {
         bool rollback_failed = false;
         for (unsigned i = 0; i < 4; ++i)
-            if (gain_write(dev, restore[i], before[restore[i]]) < 0)
+            if (gain_write(dev, chain, restore[i], before[restore[i]]) < 0)
                 rollback_failed = true;
         if (rollback_failed)
             return BIRRIASDR_ERROR_STATE;
@@ -122,24 +135,28 @@ static int gain_values(const struct birriasdr_gain *gain, uint32_t values[4])
 /* Each read boots into an unforced baseline. Save it even in released mode so
  * a later manual update cannot mistake its own force bits for the baseline.
  * Only the capture owner may call this initialization, before releasing GO.
+ * The chain is the antenna's; it is saved with the baseline, so every later
+ * change and the restore touch the same chain.
  */
 int mt_apply_gain(birriasdr_dev_t *dev)
 {
     uint32_t before[4], coarse, values[4];
+    unsigned chain = dev->antenna;
     BS_TRY(gain_values(&dev->gain, values));
-    BS_TRY(gain_snapshot(dev, before));
+    BS_TRY(gain_snapshot(dev, chain, before));
     BS_TRY(bs_read32(dev, BS_MMIO, 0x830000d0, &coarse));
     if ((before[3] & 0x80000000) && !(before[0] & 7) && !(before[2] & 0x80000000) &&
         !(coarse & (1u << 27))) {
-        BS_TRY(gain_write(dev, 3, 0));
-        BS_TRY(gain_snapshot(dev, before));
+        BS_TRY(gain_write(dev, chain, 3, 0));
+        BS_TRY(gain_snapshot(dev, chain, before));
     }
     if ((before[0] & 7) || (before[2] & 0x80000000) ||
         (before[3] & 0x80000000) || (coarse & (1u << 27)))
         return BIRRIASDR_ERROR_STATE;
     memcpy(dev->mt7921.gain_baseline, before, sizeof(before));
+    dev->mt7921.gain_chain = chain;
     dev->mt7921.gain_saved = true;
-    return dev->manual || dev->host_agc ? gain_transaction(dev, before, values, true) : 0;
+    return dev->manual || dev->host_agc ? gain_transaction(dev, chain, before, values, true) : 0;
 }
 
 /* Change gain on an initialized receiver without stopping ICAP or rebooting.
@@ -158,8 +175,8 @@ int mt_change_gain(birriasdr_dev_t *dev, bool manual, const struct birriasdr_gai
         return BIRRIASDR_ERROR_STATE;
     if (!manual)
         memcpy(values, dev->mt7921.gain_baseline, sizeof(values));
-    BS_TRY(gain_snapshot(dev, before));
-    return gain_transaction(dev, before, values, manual);
+    BS_TRY(gain_snapshot(dev, dev->mt7921.gain_chain, before));
+    return gain_transaction(dev, dev->mt7921.gain_chain, before, values, manual);
 }
 
 /* WFSYS reset does not reliably erase analog gain overrides. Restore this
@@ -175,7 +192,8 @@ int mt_restore_gain(birriasdr_dev_t *dev)
         return 0;
     for (unsigned i = 0; i < 4; ++i) {
         unsigned field = order[i];
-        int result = gain_write(dev, field, dev->mt7921.gain_baseline[field]);
+        int result = gain_write(dev, dev->mt7921.gain_chain, field,
+                                dev->mt7921.gain_baseline[field]);
         if (result < 0 && !first_error)
             first_error = result;
     }

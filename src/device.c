@@ -568,11 +568,33 @@ int birriasdr_get_freq_correction(const birriasdr_dev_t *dev)
     return dev ? dev->ppm : 0;
 }
 
-/* TODO: decode board routing; the ICAP chain selector is a different control. */
+/* Stored for the next read, since the receive chain is set up before GO. */
 int birriasdr_set_antenna(birriasdr_dev_t *dev, unsigned antenna)
 {
-    (void)antenna;
-    return unsupported_control(dev);
+    int result = 0;
+    if (!dev)
+        return BIRRIASDR_ERROR_INVALID;
+    if (!(dev->backend->capabilities & BIRRIASDR_CAP_ANTENNA))
+        return BIRRIASDR_ERROR_UNSUPPORTED;
+    if (antenna >= dev->backend->antenna_count)
+        return BIRRIASDR_ERROR_INVALID;
+    pthread_mutex_lock(&dev->control_mutex);
+    if (atomic_load(&dev->run_state) != BS_IDLE)
+        result = BIRRIASDR_ERROR_BUSY;
+    else
+        dev->antenna = (uint8_t)antenna;
+    pthread_mutex_unlock(&dev->control_mutex);
+    return result;
+}
+
+unsigned birriasdr_get_antenna(const birriasdr_dev_t *dev)
+{
+    return dev ? dev->antenna : 0;
+}
+
+unsigned birriasdr_get_antenna_count(const birriasdr_dev_t *dev)
+{
+    return dev && dev->backend->antenna_count ? dev->backend->antenna_count : 1;
 }
 
 /* TODO: identify writable coefficient fields and their ordering/units. This API

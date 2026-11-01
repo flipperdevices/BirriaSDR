@@ -52,7 +52,8 @@ library embeds its assembled image.
 The tested hardware is the **COMFAST MT7961/MT7921AU dongle (`3574:6211`)**,
 which pairs an MT7961 digital die with an MT7972 analog die. By default the
 receiver is centered on Wi-Fi channel 6 (nominally 2437 MHz) and uses receive
-chain 0 at 40 million complex samples per second. You can select 10, 20 or 80
+chain 0, or chain 1 with `birriasdr_set_antenna`, at 40 million complex samples
+per second. You can select 10, 20 or 80
 million instead. The library can retune anywhere in the 2156 to 2610 MHz and
 4500 to 6200 MHz bands, even while streaming and across bands. Each rate pairs
 an **analog filter with a digital bandwidth setting that matches its span**. The
@@ -78,9 +79,9 @@ For more detail, see:
 | Sample rate | 10, 20, 40 or 80 MSps complex. The default is 40 MSps |
 | Sampled bandwidth | A span equal to the sample rate, with nominal analog and digital settings for that span, or a 40 MHz filter at 80 MSps and a 20 MHz one at 40 MSps. The 10 MSps rate uses the 20 MHz analog setting with a narrower digital filter. See [filter characteristics](docs/mt7921.md#filtering) for rolloff and aliasing limits |
 | Sample resolution | Signed 14-bit I and Q, from −8192 to 8191 |
-| Receive channels | One (chain 0) |
+| Receive channels | One at a time, chain 0 or chain 1, each with its own antenna connector |
 | Transmit | None, receive only |
-| Gain | Calibrated in dB from a measured table: 0 to 46 dB at 2.4 GHz and 0 to 39.5 dB at 5 GHz, within about 1 dB on the tested board. Raw codes for LNA 0 to 5, filter stage 0 to 8 and digital 0 to 12 stay available |
+| Gain | Calibrated in whole dB from a measured table: 0 to 46 dB at 2.4 GHz and 0 to 40 dB at 5 GHz, within about 1 dB on two boards and both receive chains. Raw codes for LNA 0 to 5, filter stage 0 to 8 and digital 0 to 12 stay available |
 | Live gain changes | Supported without restarting capture, with a brief settling transient |
 | Automatic gain | The library's AGC keeps the level between about -30 and -12 dBFS using the measured gain table, LNA first. Releasing the overrides to the chip instead stays available |
 | Frequency accuracy | Uncalibrated. A ppm correction for the reference crystal can be set; the sample clock keeps its error |

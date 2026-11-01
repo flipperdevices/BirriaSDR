@@ -356,8 +356,14 @@ int birriasdr_get_tuner_bandwidths(const birriasdr_dev_t *dev, uint32_t *widths,
 int birriasdr_set_freq_correction(birriasdr_dev_t *dev, int ppm);
 int birriasdr_get_freq_correction(const birriasdr_dev_t *dev);
 
-/** Reserved: physical antenna routing. UNSUPPORTED; chain != antenna switch. */
+/** Choose the receive chain, with CAP_ANTENNA: 0, the default, or 1 below
+ * get_antenna_count. Each chain has its own antenna connector; which one is the
+ * board's to say. Applies at the next read; BUSY during capture. Gain codes
+ * apply to the chosen chain, and the gain table holds for both.
+ */
 int birriasdr_set_antenna(birriasdr_dev_t *dev, unsigned antenna);
+unsigned birriasdr_get_antenna(const birriasdr_dev_t *dev);
+unsigned birriasdr_get_antenna_count(const birriasdr_dev_t *dev);
 
 /** Reserved: apply volatile calibration coefficients. UNSUPPORTED until their
  * format, routing and calibration procedure are decoded. Never programs eFuse.

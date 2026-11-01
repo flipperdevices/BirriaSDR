@@ -254,6 +254,11 @@ static int initialize_chains(birriasdr_dev_t *dev)
  * applying the active bank's value to both reproduced the weak-input fault.
  * RF 160[31:30]=0 preserves the bootstrap; mt_configure_filter() later applies
  * the profile selected by the sample rate.
+ *
+ * For antenna 1, SPI 0's 1E4 also takes the active value, with its own [7:6]
+ * kept: chain 1 then receives and chain 0 keeps its LO, measured on both taps.
+ * Its 0x240 stays 0; the active bank's 0xa there takes chain 0's LO away. ICAP
+ * reads chain 1 on tap 5.
  */
 static int select_receive_path(birriasdr_dev_t *dev)
 {
@@ -283,7 +288,9 @@ static int select_receive_path(birriasdr_dev_t *dev)
         BS_TRY(rf_words(dev, p, receive_pairs, sizeof(receive_pairs) / sizeof(receive_pairs[0])));
         BS_TRY(mt_rf_update(dev, p, 0x160, 0xc0000000, 0));
     }
-    return bs_update32(dev, BS_MMIO, 0x830ad448, 0xf00, 0x400);
+    if (dev->antenna)
+        BS_TRY(mt_rf_update(dev, 0, 0x1e4, ~0xc0u, 0x3fb0b & ~0xc0u));
+    return bs_update32(dev, BS_MMIO, 0x830ad448, 0xf00, (4u + dev->antenna) << 8);
 }
 
 /* Validate the die/crystal, initialize the established channel-6 clock/bias
