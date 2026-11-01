@@ -36,6 +36,10 @@ public:
 
     size_t getNumChannels(const int direction) const override;
 
+    std::vector<std::string> listAntennas(const int direction, const size_t channel) const override;
+    void setAntenna(const int direction, const size_t channel, const std::string &name) override;
+    std::string getAntenna(const int direction, const size_t channel) const override;
+
     std::vector<std::string> listGains(const int direction, const size_t channel) const override;
     SoapySDR::Range getGainRange(const int direction, const size_t channel,
                                  const std::string &name) const override;

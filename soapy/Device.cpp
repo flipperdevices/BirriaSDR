@@ -96,6 +96,39 @@ size_t SoapyBirria::getNumChannels(const int direction) const
     return direction == SOAPY_SDR_RX ? 1 : 0;
 }
 
+/* One antenna per receive chain, named RX0 and RX1 after the chain. The chain
+ * is set up when a read starts, so a running stream restarts as for a rate
+ * change.
+ */
+std::vector<std::string> SoapyBirria::listAntennas(const int, const size_t) const
+{
+    std::vector<std::string> names;
+    for (unsigned i = 0; i < birriasdr_get_antenna_count(dev_); ++i)
+        names.push_back("RX" + std::to_string(i));
+    return names;
+}
+
+void SoapyBirria::setAntenna(const int, const size_t, const std::string &name)
+{
+    std::unique_lock<std::shared_mutex> control(controlMutex_);
+    if (name.size() != 3 || name.compare(0, 2, "RX") != 0 || name[2] < '0' || name[2] > '9') {
+        SoapySDR::log(SOAPY_SDR_ERROR, "birria: unknown antenna " + name);
+        return;
+    }
+    const unsigned antenna = static_cast<unsigned>(name[2] - '0');
+    if (antenna == birriasdr_get_antenna(dev_))
+        return;
+    whileIdle([this, antenna] {
+        report(birriasdr_set_antenna(dev_, antenna), "set_antenna");
+    }, "birria: cannot restart the stream after an antenna change");
+}
+
+std::string SoapyBirria::getAntenna(const int, const size_t) const
+{
+    std::shared_lock<std::shared_mutex> control(controlMutex_);
+    return "RX" + std::to_string(birriasdr_get_antenna(dev_));
+}
+
 /* The measured stage table of the current band, when the library has one. */
 static bool gainTable(birriasdr_dev_t *dev, birriasdr_gain_table &table)
 {
