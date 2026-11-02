@@ -361,8 +361,24 @@ void SoapyBirria::setFrequency(const int, const size_t, const std::string &, con
         }
         return;
     }
-    if (report(result, "set_center_freq"))
+    if (report(result, "set_center_freq")) {
         offBand_ = false;
+        discardQueued();
+    }
+}
+
+/* A retune takes tens of milliseconds, and an application that retunes from
+ * its read thread, as GNU Radio does, reads nothing meanwhile. Samples queued
+ * until now were taken at the old center, so drop them: later reads come from
+ * the new center, apart from the chunk being read and the few milliseconds the
+ * device and USB still hold. No gap is reported, since the application asked
+ * for the discontinuity, and GNU Radio would print each OVERFLOW.
+ */
+void SoapyBirria::discardQueued()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    queue_.clear();
+    queued_ = 0;
 }
 
 /* Return the committed center, not the frequency of samples already queued. */

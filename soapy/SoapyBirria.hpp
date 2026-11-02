@@ -101,6 +101,7 @@ private:
     void commitGainLocked(const birriasdr_gain &next, bool manual);
     void whileIdle(const std::function<void()> &change, const char *restartFailed);
     void markGap();
+    void discardQueued();
     void onCallbackFailure();
     int startWorker();
     void stopWorker();

@@ -105,9 +105,13 @@ int birriasdr_get_dc_offset(const birriasdr_dev_t *, float *i, float *q)
     return 0;
 }
 /* The real bands are 2156..2610 and 4500..6200 MHz; between them is enough here. */
+static std::atomic<uint64_t> stub_center{2437000000u};
 int birriasdr_set_center_freq(birriasdr_dev_t *, uint64_t frequency_hz)
 {
-    return frequency_hz > 2610000000u && frequency_hz < 4500000000u ? BIRRIASDR_ERROR_UNSUPPORTED : 0;
+    if (frequency_hz > 2610000000u && frequency_hz < 4500000000u)
+        return BIRRIASDR_ERROR_UNSUPPORTED;
+    stub_center = frequency_hz;
+    return 0;
 }
 static int stub_ppm;
 int birriasdr_set_freq_correction(birriasdr_dev_t *, int ppm)
@@ -153,8 +157,9 @@ int birriasdr_get_tuning_band(const birriasdr_dev_t *, uint32_t, uint64_t *, uin
 {
     return BIRRIASDR_ERROR_INVALID;
 }
-/* Each sample's I component is the rate in MSps, so a reader can tell which
- * rate produced it.
+/* Each sample's I component is the rate in MSps and its Q component the
+ * center in units of 100 MHz, so a reader can tell which rate and center
+ * produced it.
  */
 int birriasdr_read_async(birriasdr_dev_t *, birriasdr_read_async_cb_t callback, void *context,
                          uint32_t, uint32_t)
@@ -176,6 +181,9 @@ int birriasdr_read_async(birriasdr_dev_t *, birriasdr_read_async_cb_t callback, 
             stub_reading = false;
             return BIRRIASDR_ERROR_IO;
         }
+        const int16_t center = static_cast<int16_t>(stub_center / 100000000u);
+        for (unsigned i = 0; i < 1024; ++i)
+            iq[2 * i + 1] = center;
         callback(iq, 1024, 0, context);
         std::this_thread::sleep_for(std::chrono::microseconds(200));
     }
@@ -488,6 +496,39 @@ int main()
         CHECK(dev.deactivateStream(stream) == 0);
         dev.closeStream(stream);
     }
+
+    /* A retune drops what was queued at the old center: at most the chunk
+     * already being read comes before the new center, and no gap is reported. */
+    stream = dev.setupStream(SOAPY_SDR_RX, SOAPY_SDR_CS16);
+    dev.setFrequency(SOAPY_SDR_RX, 0, "RF", 2412e6, {});
+    CHECK(dev.activateStream(stream) == 0);
+    {
+        static int16_t buf[2 * 1024];
+        void *buffs[] = {buf};
+        int flags = 0, n = 0, old = 0, fresh = 0;
+        long long time = 0;
+        CHECK(dev.readStream(stream, buffs, 512, flags, time, 500000) == 512);
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        dev.setFrequency(SOAPY_SDR_RX, 0, "RF", 5180e6, {});
+        while (fresh < 8192) {
+            n = dev.readStream(stream, buffs, 1024, flags, time, 500000);
+            CHECK(n > 0);
+            if (n <= 0)
+                break;
+            for (int i = 0; i < n; ++i) {
+                if (buf[2 * i + 1] == 24) {
+                    CHECK(fresh == 0);
+                    ++old;
+                } else {
+                    CHECK(buf[2 * i + 1] == 51);
+                    ++fresh;
+                }
+            }
+        }
+        CHECK(old <= 1024);
+    }
+    CHECK(dev.deactivateStream(stream) == 0);
+    dev.closeStream(stream);
 
     puts("SoapySDR native sample rate tests passed");
     return 0;

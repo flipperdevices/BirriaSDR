@@ -38,6 +38,12 @@ was, and reads give zeros until a center inside them is set, because front ends
 such as SDR++ do not limit tuning to the reported ranges and would show the old
 center's samples under the new label.
 
+A retune takes tens of milliseconds. Samples still queued from the old center
+are dropped when it completes, so an application that hops, such as a scanner,
+reads the new center straight after it. Only the few milliseconds the device and
+USB still hold remain from before the retune. The drop is not reported as a gap,
+since the application asked for the retune.
+
 The module enables the library's automatic recovery, so a stream keeps running
 across overruns. Each gap reaches the application as `SOAPY_SDR_OVERFLOW` from
 the read call, and the samples that follow are not continuous with the ones
