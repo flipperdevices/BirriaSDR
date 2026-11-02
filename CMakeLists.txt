@@ -60,6 +60,16 @@ elseif(UNIX)
     set_target_properties(birria_udp PROPERTIES INSTALL_RPATH "$ORIGIN/${BIRRIA_BIN_TO_LIB}")
 endif()
 
+# Flipper One: burst patch and the scripts that take the onboard chip from Wi-Fi and give it back.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(birria_burst tools/flipper-one/birria_burst.c)
+    target_include_directories(birria_burst PRIVATE ${LIBUSB_INCLUDE_DIR})
+    target_link_libraries(birria_burst PRIVATE ${LIBUSB_LIBRARY})
+    install(TARGETS birria_burst RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(PROGRAMS tools/flipper-one/mt7921-sdr-hold tools/flipper-one/mt7921-sdr-release
+        DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
+
 if(BUILD_TESTING)
     add_executable(test_core tests/test_core.c $<TARGET_OBJECTS:birriasdr_objects>)
     target_include_directories(test_core PRIVATE include src ${LIBUSB_INCLUDE_DIR})

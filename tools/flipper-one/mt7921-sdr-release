@@ -1,0 +1,23 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 The BirriaSDR Authors
+# Give the Flipper One's onboard MT7921 back to Wi-Fi and Bluetooth.
+[ "$(id -u)" = 0 ] || { echo "run with sudo" >&2; exit 1; }
+RFK=/sys/class/rfkill/rfkill0
+DEV=/sys/bus/usb/devices/2-1.1
+[ "$(cat $RFK/name 2>/dev/null)" = "Onboard WiFi+BT" ] || { echo "not a Flipper One: no onboard Wi-Fi rfkill" >&2; exit 1; }
+[ -e /run/udev/rules.d/79-mt7921-sdr.rules ] || { echo "the chip is not held" >&2; exit 1; }
+# Powering the chip off under a reader leaves it stuck in a USB error loop.
+pgrep -x 'sdrpp|birria_rx|birria_udp|fpv-scanner' > /dev/null && { echo "close the SDR applications first" >&2; exit 1; }
+echo 1 > $RFK/soft
+i=0
+while [ -e $DEV ] && [ $i -lt 150 ]; do
+    sleep 0.1
+    i=$((i + 1))
+done
+rm -f /run/udev/rules.d/79-mt7921-sdr.rules
+udevadm control --reload
+modprobe mt7921u
+modprobe btusb
+echo 0 > $RFK/soft
+echo "released: Wi-Fi comes back in a few seconds"

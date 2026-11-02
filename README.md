@@ -17,6 +17,8 @@ anything, try the rough [proof of concept](#proof-of-concept).
 > 6200 MHz. Sensitivity across those ranges, frequency accuracy and gain are not
 > calibrated. Use at your own risk.
 
+On a Flipper One, see the [Flipper One guide](docs/flipper-one.md).
+
 https://github.com/user-attachments/assets/64e9fbbd-1f16-4c7b-905c-5624b9c574b7
 
 ## Background

@@ -1,0 +1,57 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 The BirriaSDR Authors
+# Take the Flipper One's onboard MT7921 from Wi-Fi and Bluetooth for SDR, patch it for
+# 80 MSps, and let the user who ran sudo open it. Give it back with mt7921-sdr-release.
+# Everything is volatile: a reboot gives the chip back to Wi-Fi.
+[ "$(id -u)" = 0 ] || { echo "run with sudo" >&2; exit 1; }
+DIR=$(dirname "$(readlink -f "$0")")
+RFK=/sys/class/rfkill/rfkill0
+DEV=/sys/bus/usb/devices/2-1.1
+HOLD=/run/udev/rules.d/79-mt7921-sdr.rules
+OWNER=${SUDO_USER:-root}
+[ "$(cat $RFK/name 2>/dev/null)" = "Onboard WiFi+BT" ] || { echo "not a Flipper One: no onboard Wi-Fi rfkill" >&2; exit 1; }
+[ "$(cat $RFK/soft)" = 0 ] || { echo "Wi-Fi is blocked (airplane mode?), unblock it first" >&2; exit 1; }
+
+wait_dev() {
+    i=0
+    while [ $i -lt 150 ]; do
+        if [ "$1" = present ]; then [ -e $DEV ] && return 0; else [ -e $DEV ] || return 0; fi
+        sleep 0.1
+        i=$((i + 1))
+    done
+    return 1
+}
+
+# Keep udev from loading drivers for the chip, then power cycle it without them.
+mkdir -p /run/udev/rules.d
+echo 'SUBSYSTEM=="usb", KERNELS=="2-1.1", ATTRS{idVendor}=="0e8d", ATTRS{idProduct}=="7961", ENV{MODALIAS}=""' > $HOLD
+udevadm control --reload
+echo 1 > $RFK/soft
+wait_dev absent || { echo "the chip did not power off" >&2; exit 1; }
+modprobe -r mt7921u btusb
+echo 0 > $RFK/soft
+wait_dev present || { echo "the chip did not come back" >&2; exit 1; }
+sleep 1
+for i in "$DEV"/2-1.1:*; do
+    [ -e "$i/driver" ] && { echo "a driver is still bound to $(basename "$i")" >&2; exit 1; }
+done
+
+burst=$DIR/birria_burst
+[ -x "$burst" ] || burst=$(command -v birria_burst)
+if [ -n "$burst" ] && "$burst"; then
+    sleep 3
+    wait_dev present || { echo "the chip did not re-enumerate" >&2; exit 1; }
+else
+    echo "no burst patch: 80 MSps will overrun" >&2
+fi
+
+node=$(printf '/dev/bus/usb/%03d/%03d' "$(cat $DEV/busnum)" "$(cat $DEV/devnum)")
+setfacl -m "u:$OWNER:rw" "$node"
+# The library's lock is per bus and address, mode 0600; make it the user's before a root run can.
+lock=$(printf '/tmp/birriasdr-%d-%d.lock' "$(cat $DEV/busnum)" "$(cat $DEV/devnum)")
+[ -L "$lock" ] && { echo "$lock is a symlink, refusing" >&2; exit 1; }
+touch "$lock"
+chown "$OWNER:" "$lock"
+chmod 600 "$lock"
+echo "held for $OWNER: Wi-Fi and Bluetooth are off until mt7921-sdr-release"
