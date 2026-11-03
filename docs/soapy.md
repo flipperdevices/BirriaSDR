@@ -15,6 +15,8 @@ converts samples to the requested format without resampling.
 | Bandwidth | The receive filters the current rate can use: 40 or 80 MHz at 80 MSps, 20 or 40 MHz at 40 MSps, and the span's own at 10 and 20 MSps. A request gets the smallest at least as wide; a running stream restarts, as for a rate change |
 | Frequency correction | In ppm, rounded to whole ppm, through `birriasdr_set_freq_correction()`. It retunes at once and does not correct the sample clock |
 | Stream formats | `CS16` (native, raw) and `CF32` |
+| Stream arguments | `buffer_samples`, the samples per buffer handed to the application, a multiple of 2048 up to 262144, default 16384, and `transfers`, the USB transfers kept queued, 4 to 256, default the library's 64. Larger buffers cost less CPU and add latency. An invalid value fails `setupStream()` |
+| Stream MTU | `buffer_samples`. Applications such as CubicSDR and SoapyRemote read at most the MTU per call |
 | DC offset mode | Automatic (default) or off. Automatic takes the library's DC estimate (`birriasdr_get_dc_offset()`), the digital gain stage's truncation, out of `CF32`. `CS16` is always raw |
 | Frequency range | One range per band, from `birriasdr_get_tuning_band()`, so front ends do not offer the gap between bands. The bands match the frequency tuning row of the README [specifications](../README.md#specifications) |
 | Gains | `LNA`, `LPF` and `DIG` in dB from the library's measured table for the current band; a value snaps to the nearest step of its stage. The overall gain fills the LNA first, then `LPF`, then `DIG`, as `birriasdr_set_tuner_gain()` does. In a band without a table the elements are raw codes: `LNA` 0 to 5, `LPF` 0 to 8 and `DIG` 0 to 12 |

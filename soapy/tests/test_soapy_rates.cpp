@@ -20,6 +20,7 @@
 #include <cstdlib>
 #include <string>
 #include <thread>
+#include <vector>
 
 #define CHECK(test)                                                                      \
     do {                                                                                 \
@@ -33,6 +34,7 @@ static std::atomic<uint32_t> stub_rate{40000000};
 static unsigned stub_rate_calls;
 static std::atomic<bool> stub_reading{false}, stub_cancel{false};
 static std::atomic<unsigned> stub_reads{0}, stub_busy_rate_calls{0};
+static std::atomic<uint32_t> stub_transfers{0}, stub_buffer_samples{0}; /* read sizing asked for */
 static std::atomic<bool> stub_fail_read{false}; /* the next read ends at once with an error */
 static std::atomic<int> stub_end_after{0};        /* the next read fails after this many chunks */
 static std::atomic<bool> stub_slow_rate{false};   /* the next rate change takes 100 ms */
@@ -162,10 +164,12 @@ int birriasdr_get_tuning_band(const birriasdr_dev_t *, uint32_t, uint64_t *, uin
  * produced it.
  */
 int birriasdr_read_async(birriasdr_dev_t *, birriasdr_read_async_cb_t callback, void *context,
-                         uint32_t, uint32_t)
+                         uint32_t transfer_count, uint32_t buffer_samples)
 {
     static int16_t iq[2 * 1024];
     ++stub_reads;
+    stub_transfers = transfer_count;
+    stub_buffer_samples = buffer_samples;
     if (stub_fail_read.exchange(false))
         return BIRRIASDR_ERROR_IO;
     stub_cancel = false;
@@ -528,6 +532,38 @@ int main()
         CHECK(old <= 1024);
     }
     CHECK(dev.deactivateStream(stream) == 0);
+    dev.closeStream(stream);
+
+    /* Stream arguments size the library's read, and the MTU follows the buffer. */
+    stream = dev.setupStream(SOAPY_SDR_RX, SOAPY_SDR_CS16);
+    CHECK(dev.getStreamMTU(stream) == 16384);
+    CHECK(dev.activateStream(stream) == 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    CHECK(stub_transfers == 0 && stub_buffer_samples == 16384);
+    CHECK(dev.deactivateStream(stream) == 0);
+    dev.closeStream(stream);
+    stream = dev.setupStream(SOAPY_SDR_RX, SOAPY_SDR_CS16, {},
+                             {{"transfers", "32"}, {"buffer_samples", "65536"}});
+    CHECK(dev.getStreamMTU(stream) == 65536);
+    CHECK(dev.activateStream(stream) == 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    CHECK(stub_transfers == 32 && stub_buffer_samples == 65536);
+    CHECK(dev.deactivateStream(stream) == 0);
+    dev.closeStream(stream);
+    for (const SoapySDR::Kwargs &bad : std::vector<SoapySDR::Kwargs>{
+             {{"transfers", "2"}}, {{"transfers", "300"}}, {{"transfers", "x"}},
+             {{"buffer_samples", "3000"}}, {{"buffer_samples", "0"}},
+             {{"buffer_samples", "524288"}}, {{"buffer_samples", "16384k"}}}) {
+        bool refused = false;
+        try {
+            dev.setupStream(SOAPY_SDR_RX, SOAPY_SDR_CS16, {}, bad);
+        } catch (const std::runtime_error &) {
+            refused = true;
+        }
+        CHECK(refused);
+    }
+    stream = dev.setupStream(SOAPY_SDR_RX, SOAPY_SDR_CS16);
+    CHECK(dev.getStreamMTU(stream) == 16384);
     dev.closeStream(stream);
 
     puts("SoapySDR native sample rate tests passed");

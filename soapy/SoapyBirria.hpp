@@ -80,10 +80,13 @@ public:
     std::string getNativeStreamFormat(const int direction, const size_t channel,
                                       double &fullScale) const override;
 
+    SoapySDR::ArgInfoList getStreamArgsInfo(const int direction,
+                                            const size_t channel) const override;
     SoapySDR::Stream *setupStream(const int direction, const std::string &format,
                                   const std::vector<size_t> &channels = std::vector<size_t>(),
                                   const SoapySDR::Kwargs &args = SoapySDR::Kwargs()) override;
     void closeStream(SoapySDR::Stream *stream) override;
+    size_t getStreamMTU(SoapySDR::Stream *stream) const override;
     int activateStream(SoapySDR::Stream *stream, const int flags = 0, const long long timeNs = 0,
                        const size_t numElems = 0) override;
     int deactivateStream(SoapySDR::Stream *stream, const int flags = 0,
@@ -124,6 +127,8 @@ private:
     birriasdr_gain gain_{2, 8, 0};
     bool streamOpen_ = false;
     bool cs16_ = false;
+    uint32_t transfers_ = 0;         /* USB transfers kept queued; zero is the library default */
+    uint32_t bufferSamples_ = 16384; /* samples per library callback, the stream MTU */
     std::atomic<double> rate_{0};
 
     std::thread worker_;

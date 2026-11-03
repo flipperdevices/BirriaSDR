@@ -575,12 +575,52 @@ std::string SoapyBirria::getNativeStreamFormat(const int, const size_t, double &
     return SOAPY_SDR_CS16;
 }
 
+/* The library's read sizing, as stream arguments. */
+SoapySDR::ArgInfoList SoapyBirria::getStreamArgsInfo(const int, const size_t) const
+{
+    SoapySDR::ArgInfo transfers;
+    transfers.key = "transfers";
+    transfers.value = "0";
+    transfers.name = "USB transfers";
+    transfers.description = "USB transfers kept queued, 4 to 256. 0 is the library default, "
+                            "64, or 256 on macOS.";
+    transfers.type = SoapySDR::ArgInfo::INT;
+    SoapySDR::ArgInfo samples;
+    samples.key = "buffer_samples";
+    samples.value = "16384";
+    samples.name = "Buffer samples";
+    samples.description = "Samples per buffer handed to the application, a multiple of 2048 "
+                          "up to 262144. It is also the stream MTU.";
+    samples.type = SoapySDR::ArgInfo::INT;
+    return {transfers, samples};
+}
+
+/* One stream argument as an integer within its range, or the default when absent. */
+static uint32_t streamArg(const SoapySDR::Kwargs &args, const char *key, uint32_t fallback,
+                          uint32_t low, uint32_t high, uint32_t step)
+{
+    const auto found = args.find(key);
+    if (found == args.end())
+        return fallback;
+    size_t used = 0;
+    unsigned long value = 0;
+    try {
+        value = std::stoul(found->second, &used);
+    } catch (const std::exception &) {
+        used = 0;
+    }
+    if (!used || used != found->second.size() || value < low || value > high || value % step)
+        throw std::runtime_error(std::string("birria: invalid stream argument ") + key + "=" +
+                                 found->second);
+    return static_cast<uint32_t>(value);
+}
+
 /* Accept one RX stream on channel 0 in CS16 or CF32. The device is the stream
  * handle, so a second stream would change the format under the first.
  */
 SoapySDR::Stream *SoapyBirria::setupStream(const int direction, const std::string &format,
                                            const std::vector<size_t> &channels,
-                                           const SoapySDR::Kwargs &)
+                                           const SoapySDR::Kwargs &args)
 {
     if (direction != SOAPY_SDR_RX || (format != SOAPY_SDR_CS16 && format != SOAPY_SDR_CF32))
         throw std::runtime_error("birria: only RX CF32 and CS16 streams are supported");
@@ -588,9 +628,21 @@ SoapySDR::Stream *SoapyBirria::setupStream(const int direction, const std::strin
         throw std::runtime_error("birria: only channel 0 is supported");
     if (streamOpen_)
         throw std::runtime_error("birria: close the open stream before setting up another");
+    const uint32_t transfers = streamArg(args, "transfers", 0, 0, 256, 1);
+    if (transfers && transfers < 4)
+        throw std::runtime_error("birria: invalid stream argument transfers=" +
+                                 args.at("transfers"));
+    bufferSamples_ = streamArg(args, "buffer_samples", 16384, 2048, 262144, 2048);
+    transfers_ = transfers;
     cs16_ = format == SOAPY_SDR_CS16;
     streamOpen_ = true;
     return reinterpret_cast<SoapySDR::Stream *>(this);
+}
+
+/* Applications such as CubicSDR and SoapyRemote read at most this much per call. */
+size_t SoapyBirria::getStreamMTU(SoapySDR::Stream *) const
+{
+    return bufferSamples_;
 }
 
 /* Stop the stream if it is running, then allow a new one. */
@@ -736,7 +788,8 @@ int SoapyBirria::startWorker()
         if (soapy_birria_fail_worker_start())
             throw std::runtime_error("injected worker start failure");
         worker_ = std::thread([this] {
-            report(birriasdr_read_async(dev_, &SoapyBirria::asyncCallback, this, 0, 0),
+            report(birriasdr_read_async(dev_, &SoapyBirria::asyncCallback, this, transfers_,
+                                        bufferSamples_),
                    "read_async");
             if (callbackFailed_)
                 logError("birria: stopped the stream after a callback failure");
