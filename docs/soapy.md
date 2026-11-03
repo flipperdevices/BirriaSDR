@@ -10,6 +10,7 @@ converts samples to the requested format without resampling.
 | Item | Value |
 | --- | --- |
 | Driver key | `driver=birria`. A dongle is selected by enumeration order with `index=N` |
+| Serial | On a Flipper One, the onboard chip's `serial` is the Flipper's own name, as its hostname is set at first boot, such as `flipperone-45d248`: from the device tree's serial number, else the SoC's, else the machine ID. Elsewhere, and with more than one dongle, there is none |
 | Sample rates | 10, 20, 40 and 80 MSps, the native rates. The module does not resample, so an application that needs a lower rate decimates the stream itself |
 | Antennas | `RX0` and `RX1`, receive chains 0 and 1, each with its own antenna connector, and `AUTO`, which captures the stronger chain, compared at the start of a stream and after each retune. Changing it restarts a running stream, as for a rate change |
 | Bandwidth | The receive filters the current rate can use: 40 or 80 MHz at 80 MSps, 20 or 40 MHz at 40 MSps, and the span's own at 10 and 20 MSps. A request gets the smallest at least as wide; a running stream restarts, as for a rate change |

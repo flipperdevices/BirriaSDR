@@ -19,9 +19,15 @@ static SoapySDR::KwargsList findBirria(const SoapySDR::Kwargs &args)
         SoapySDR::Kwargs entry;
         entry["driver"] = "birria";
         entry["index"] = std::to_string(i);
-        // One device: a stable name, so SDR++ keeps its settings across re-enumeration.
-        if (count == 1)
-            entry["label"] = info.name;
+        // One device: a stable name, so SDR++ keeps its settings across re-enumeration,
+        // and on a Flipper One its own name, as its hostname, as the serial.
+        if (count == 1) {
+            const bool flipper = birriaIsFlipperOne();
+            entry["label"] = flipper ? "FlipperOne SDR" : info.name;
+            const std::string serial = flipper ? birriaFlipperSerial() : "";
+            if (!serial.empty())
+                entry["serial"] = serial;
+        }
         else
             entry["label"] = std::string(info.name) + " :: bus " + std::to_string(info.bus) +
                              " addr " + std::to_string(info.address);

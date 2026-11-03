@@ -6,7 +6,7 @@
 # library, so the module does not need a separately installed libbirriasdr.
 SOAPY_SDR_MODULE_UTIL(
     TARGET birriaSupport
-    SOURCES Registration.cpp Device.cpp
+    SOURCES Registration.cpp Device.cpp Identity.cpp
     LIBRARIES birriasdr
 )
 target_include_directories(birriaSupport PRIVATE ${PROJECT_SOURCE_DIR}/include)
@@ -38,4 +38,10 @@ if(BUILD_TESTING)
     target_link_libraries(test_soapy_rates PRIVATE ${SoapySDR_LIBRARIES})
     target_compile_definitions(test_soapy_rates PRIVATE SOAPY_BIRRIA_TEST_HOOKS)
     add_test(NAME soapy_rates COMMAND test_soapy_rates)
+    add_executable(test_soapy_identity tests/test_soapy_identity.cpp Identity.cpp)
+    target_compile_features(test_soapy_identity PRIVATE cxx_std_17)
+    target_include_directories(test_soapy_identity PRIVATE ${PROJECT_SOURCE_DIR}/include
+                                                           ${SoapySDR_INCLUDE_DIRS})
+    target_link_libraries(test_soapy_identity PRIVATE ${SoapySDR_LIBRARIES})
+    add_test(NAME soapy_identity COMMAND test_soapy_identity ${CMAKE_CURRENT_BINARY_DIR}/identity)
 endif()

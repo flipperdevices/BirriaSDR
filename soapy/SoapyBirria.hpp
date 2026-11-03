@@ -159,4 +159,12 @@ private:
     std::chrono::steady_clock::time_point lastReport_{};
 };
 
+/* The Flipper's own name for itself, as its hostname, below a filesystem root:
+ * "flipperone-45d248". Empty on a machine without a device tree.
+ */
+std::string birriaFlipperSerial(const std::string &root = "");
+
+/* Whether the machine below a filesystem root is a Flipper One, from its device tree. */
+bool birriaIsFlipperOne(const std::string &root = "");
+
 #endif
