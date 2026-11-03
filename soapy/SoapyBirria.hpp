@@ -107,6 +107,11 @@ private:
     void stopWorker();
 
     static constexpr size_t kMaxQueuedSamples = 16u << 20; /* complex samples, ~64 MiB */
+    /* A waiting read is woken once this much of its request is queued, rather
+     * than for every chunk: up to kWakeSamples, and no more than kWakeRateDivisor
+     * of a second's samples, under 7 ms, so a low rate does not wait out the timeout. */
+    static constexpr size_t kWakeSamples = 65536;
+    static constexpr size_t kWakeRateDivisor = 150;
     static constexpr uint32_t kMaxRestarts = 3; /* device or transport faults per stream */
 
     birriasdr_dev_t *dev_ = nullptr;
@@ -137,6 +142,7 @@ private:
     std::condition_variable cond_;
     std::deque<std::vector<int16_t>> queue_; /* an empty chunk marks a gap */
     size_t queued_ = 0;
+    size_t wanted_ = 1; /* samples a waiting read needs before it is woken */
 
     std::vector<int16_t> current_; /* chunk being read, owned by the reader */
     size_t offset_ = 0;            /* complex samples already read from current_ */

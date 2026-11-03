@@ -650,7 +650,8 @@ void SoapyBirria::onSamples(const int16_t *iq, uint32_t count)
     }
     queue_.emplace_back(iq, iq + 2 * static_cast<size_t>(count));
     queued_ += count;
-    cond_.notify_one();
+    if (queued_ >= wanted_)
+        cond_.notify_one();
 }
 
 /* Runs on the read thread after the library has delivered every sample from
@@ -844,10 +845,17 @@ int SoapyBirria::readLocked(void *const *buffs, const size_t numElems,
             if (queue_.empty()) {
                 if (count > 0)
                     break;
-                if (running_ && !cond_.wait_until(lock, deadline, [this] {
-                        return !queue_.empty() || !running_ || restarting_;
-                    }))
-                    return SOAPY_SDR_TIMEOUT;
+                if (running_) {
+                    const size_t rateCap = static_cast<size_t>(rate_.load()) / kWakeRateDivisor;
+                    wanted_ = std::max<size_t>(1, std::min({numElems, kWakeSamples, rateCap}));
+                    const bool ready = cond_.wait_until(lock, deadline, [this] {
+                        return queued_ >= wanted_ || (!queue_.empty() && queue_.back().empty()) ||
+                               !running_ || restarting_;
+                    });
+                    wanted_ = 1;
+                    if (!ready && queue_.empty())
+                        return SOAPY_SDR_TIMEOUT;
+                }
                 if (restarting_ && queue_.empty()) {
                     interrupted = true;
                     return 0;
