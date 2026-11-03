@@ -116,7 +116,8 @@ struct birriasdr_dev {
     uint32_t recovery_limit;
     atomic_uint_fast64_t frequency;
     int32_t ppm;
-    uint32_t rate;
+    uint32_t rate;       /* the hardware's rate; delivered samples are rate >> decimation */
+    unsigned decimation; /* half-band stages after decoding, 0 at the native rates */
     unsigned usb_burst;  /* endpoint burst to program; 0 for BIRRIA_BURST or the ROM's */
     char cpus[64];       /* CPU list for the library's threads, when cpus_set */
     bool cpus_set;       /* else BIRRIA_CPUS applies */
@@ -266,6 +267,24 @@ static inline uint32_t bs_packet_samples(const birriasdr_dev_t *dev)
 {
     return dev->rate <= 20000000 ? BS_PACKET_SAMPLES / 2 : BS_PACKET_SAMPLES;
 }
+/* Power-of-two decimation below the 10 MSps hardware rate, in decimate.c. */
+#define BS_DECIMATION_BASE 10000000u
+#define BS_DECIMATION_MAX 4u
+#define BS_DECIMATED_GAIN 4.0f /* two more bits: full scale 32768 */
+#define BS_HALFBAND_SIDE 14u
+#define BS_HALFBAND_HISTORY (4u * BS_HALFBAND_SIDE - 2u) /* 55 taps less one */
+struct bs_decimator {
+    unsigned stages;
+    float history[BS_DECIMATION_MAX][2 * BS_HALFBAND_HISTORY];
+    float work[2 * (BS_HALFBAND_HISTORY + BS_PACKET_SAMPLES)];
+    float planar[6][(BS_HALFBAND_HISTORY + BS_PACKET_SAMPLES) / 2]; /* even, odd and out I, Q */
+    float stage[BS_PACKET_SAMPLES];
+};
+void bs_decimator_reset(struct bs_decimator *decimator, unsigned stages);
+/* samples is a multiple of 2^stages, at most BS_PACKET_SAMPLES; returns the output count. */
+size_t bs_decimate(struct bs_decimator *decimator, const int16_t *in, size_t samples,
+                   int16_t *out);
+
 int bs_stream(birriasdr_dev_t *dev, birriasdr_read_async_cb_t callback,
                void *context, uint32_t depth, uint32_t buffer_samples, uint32_t packets);
 

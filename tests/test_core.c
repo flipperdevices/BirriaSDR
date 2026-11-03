@@ -294,8 +294,17 @@ static void test_api(void)
     CHECK(birriasdr_get_tuning_range(&dev, &minimum, &maximum) == 0);
     CHECK(minimum == UINT64_C(2156000000));
     CHECK(birriasdr_set_sample_rate(&dev, 0) == BIRRIASDR_ERROR_UNSUPPORTED);
-    CHECK(birriasdr_set_sample_rate(&dev, 5000000) == BIRRIASDR_ERROR_UNSUPPORTED);
+    /* Below 10 MSps by a power of two, to 1/16: the hardware runs at 10 MSps. */
+    for (uint32_t rate = 5000000, stages = 1; rate >= 625000; rate /= 2, ++stages) {
+        CHECK(birriasdr_set_sample_rate(&dev, rate) == 0);
+        CHECK(birriasdr_get_sample_rate(&dev) == rate && dev.rate == 10000000);
+        CHECK(dev.decimation == stages && birriasdr_get_full_scale(&dev) == 32768);
+    }
+    CHECK(birriasdr_set_sample_rate(&dev, 312500) == BIRRIASDR_ERROR_UNSUPPORTED);
+    CHECK(birriasdr_set_sample_rate(&dev, 3000000) == BIRRIASDR_ERROR_UNSUPPORTED);
+    CHECK(birriasdr_get_sample_rate(&dev) == 625000);
     CHECK(birriasdr_set_sample_rate(&dev, 10000000) == 0);
+    CHECK(dev.decimation == 0 && birriasdr_get_full_scale(&dev) == 8192);
     /* Burst and CPU settings: explicit values win, the environment fills in. */
     unsetenv("BIRRIA_BURST");
     unsetenv("BIRRIA_CPUS");

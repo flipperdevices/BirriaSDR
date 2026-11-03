@@ -15,7 +15,9 @@ submits that memory to USB DMA. The host checks the resulting stream and
 delivers I/Q samples to the application. The implemented backend pairs a
 nominal analog filter with a digital bandwidth class for each supported rate of
 10, 20, 40 or 80 MSps complex. The 10 MSps rate uses the 20 MHz analog setting
-with a narrower digital filter. The sampled span equals the rate, and the
+with a narrower digital filter. Lower rates, 5 MSps down to 0.625 MSps by
+halves, run the hardware at 10 MSps and decimate on the host. The sampled span
+equals the rate, and the
 [filter reference](mt7921.md#filtering) documents the measured rolloff and
 out-of-span rejection. Sample packing, memory layout and register sequences
 all belong to the chipset backend.

@@ -85,6 +85,7 @@ int birriasdr_set_sample_rate(birriasdr_dev_t *, uint32_t rate)
     return 0;
 }
 uint32_t birriasdr_get_sample_rate(const birriasdr_dev_t *) { return stub_rate; }
+uint32_t birriasdr_get_full_scale(const birriasdr_dev_t *) { return stub_rate < 10000000 ? 32768 : 8192; }
 int birriasdr_set_tuner_gain_mode(birriasdr_dev_t *, int) { return 0; }
 int birriasdr_set_gain_codes(birriasdr_dev_t *, const struct birriasdr_gain *) { return 0; }
 int birriasdr_get_gain_codes(birriasdr_dev_t *, struct birriasdr_gain *gain, int *manual)
@@ -205,7 +206,7 @@ int birriasdr_cancel_async(birriasdr_dev_t *)
 
 int main()
 {
-    static const double native[] = {10e6, 20e6, 40e6, 80e6};
+    static const double native[] = {625e3, 1.25e6, 2.5e6, 5e6, 10e6, 20e6, 40e6, 80e6};
     SoapySDR_setLogLevel(SOAPY_SDR_CRITICAL);
     SoapyBirria dev(0, {});
 
@@ -232,18 +233,22 @@ int main()
     CHECK(stub_bandwidth == 0);
 
     const auto listed = dev.listSampleRates(SOAPY_SDR_RX, 0);
-    CHECK(listed.size() == 4);
+    CHECK(listed.size() == 8);
     const auto ranges = dev.getSampleRateRange(SOAPY_SDR_RX, 0);
-    CHECK(ranges.size() == 4);
-    for (unsigned i = 0; i < 4; ++i) {
+    CHECK(ranges.size() == 8);
+    for (unsigned i = 0; i < 8; ++i) {
         CHECK(listed[i] == native[i]);
         CHECK(ranges[i].minimum() == native[i] && ranges[i].maximum() == native[i]);
     }
 
+    /* The full scale follows the rate: two more bits below 10 MSps. */
     for (double rate : native) {
         dev.setSampleRate(SOAPY_SDR_RX, 0, rate);
         CHECK(stub_rate == static_cast<uint32_t>(rate));
         CHECK(dev.getSampleRate(SOAPY_SDR_RX, 0) == rate);
+        double full = 0;
+        CHECK(dev.getNativeStreamFormat(SOAPY_SDR_RX, 0, full) == SOAPY_SDR_CS16);
+        CHECK(full == (rate < 10e6 ? 32768.0 : 8192.0));
     }
 
     /* A request within 1 Hz of a native rate reaches the library as that exact
@@ -256,7 +261,8 @@ int main()
 
     /* Refused values never reach the library, and the rate stays at 80 MSps. */
     const unsigned calls = stub_rate_calls;
-    for (double rate : {5e6, 60e6, 160e6, 4334967296.0, -40e6, 10000001.0, std::nan("")})
+    for (double rate : {3e6, 312500.0, 60e6, 160e6, 4334967296.0, -40e6, 10000001.0,
+                        std::nan("")})
         dev.setSampleRate(SOAPY_SDR_RX, 0, rate);
     CHECK(stub_rate_calls == calls);
     CHECK(dev.getSampleRate(SOAPY_SDR_RX, 0) == 80e6);

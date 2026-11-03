@@ -478,6 +478,54 @@ static void test_local_recovery(uint32_t rate, bool cancel_gap)
     CHECK(pthread_mutex_destroy(&dev.control_mutex) == 0);
 }
 
+/* Below 10 MSps the delivered packets are halved: count them at that size. */
+static void decimated_gap(const struct birriasdr_recovery_event *event, void *context)
+{
+    struct local_observation *o = context;
+    CHECK(event->attempt == ++o->gaps && event->next_sample == o->samples);
+    CHECK(o->samples == (uint64_t)o->gaps * 2 * (bs_packet_samples(o->dev) >> o->dev->decimation));
+}
+
+/* Filtered values cannot be predicted exactly, but stay within the packets'
+ * levels times the two extra bits, with room for the filters' overshoot. A
+ * leaked invalid packet would have failed its decode instead.
+ */
+static void decimated_samples(const int16_t *iq, uint32_t count, uint64_t first, void *context)
+{
+    struct local_observation *o = context;
+    CHECK(first == o->samples && count % (bs_packet_samples(o->dev) >> o->dev->decimation) == 0);
+    for (uint32_t n = 0; n < count; ++n) {
+        CHECK(iq[2 * n] >= -40 && iq[2 * n] <= 4 * 40 * 11 / 10);
+        CHECK(iq[2 * n + 1] >= -4 && iq[2 * n + 1] <= 4 * 7 * 11 / 10);
+    }
+    o->samples += count;
+    if (o->gaps >= 6)
+        CHECK(birriasdr_cancel_async(o->dev) == 0);
+}
+
+/* Decimated reads: the held packet is halved only once confirmed, so the one a
+ * gap discards never reaches the filters, and finite reads count output.
+ */
+static void test_decimated(unsigned stages)
+{
+    struct model m = {.local_recovery = true};
+    birriasdr_dev_t dev = {.backend = &backend, .frequency = 2437000000, .rate = 10000000,
+                          .decimation = stages, .control_mutex = PTHREAD_MUTEX_INITIALIZER};
+    struct local_observation o = {.dev = &dev};
+    int16_t samples[4096];
+    uint32_t received;
+    atomic_init(&dev.run_state, BS_IDLE);
+    dev.io.context = &m;
+    CHECK(birriasdr_set_recovery(&dev, 1, decimated_gap, &o) == 0);
+    CHECK(birriasdr_read_async(&dev, decimated_samples, &o, 4, 8192) == 0);
+    CHECK(o.gaps >= 6 && dev.stats.samples == o.samples);
+    CHECK(birriasdr_set_recovery(&dev, 0, NULL, NULL) == 0);
+    memset(&m, 0, sizeof(m));
+    CHECK(birriasdr_read_sync(&dev, samples, 2048, &received) == 0);
+    CHECK(received == 2048 && dev.stats.packets == (2048u << stages) / bs_packet_samples(&dev));
+    CHECK(pthread_mutex_destroy(&dev.control_mutex) == 0);
+}
+
 /* Run with no USB access. Each scenario drives the same implementation as users. */
 static void test_rate(uint32_t rate)
 {
@@ -518,6 +566,8 @@ int main(void)
         test_local_recovery(rates[i], true);
         test_rate(rates[i]);
     }
-    puts("stream lifecycle and recovery tests passed at 10, 20, 40 and 80 MSps");
+    for (unsigned stages = 1; stages <= BS_DECIMATION_MAX; ++stages)
+        test_decimated(stages);
+    puts("stream lifecycle and recovery tests passed at 10, 20, 40 and 80 MSps and decimated");
     return 0;
 }

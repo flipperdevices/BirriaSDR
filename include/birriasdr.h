@@ -115,12 +115,14 @@ struct birriasdr_stream_stats {
     int reset_error;
 };
 
-/** Samples are interleaved native-endian int16_t I,Q in [-8192,8191].
+/** Samples are interleaved native-endian int16_t I,Q in [-8192,8191] at the
+ * native rates, and in [-32768,32767] at the decimated ones, as
+ * birriasdr_get_full_scale() reports.
  * count and first_sample count COMPLEX samples, not scalar components/bytes.
- * The buffer is borrowed until callback return; copy it to retain it. There
- * is no host-side averaging, decimation, left shifting, or floating-point
- * conversion. At 10 and 20 MSps the device's capture packer keeps one tap
- * sample in four before the samples reach the host.
+ * The buffer is borrowed until callback return; copy it to retain it. At the
+ * native rates there is no host-side averaging, decimation, left shifting, or
+ * floating-point conversion. At 10 and 20 MSps the device's capture packer
+ * keeps one tap sample in four before the samples reach the host.
  * Run callbacks promptly: a stalled consumer can overrun the device's SRAM.
  * The center-frequency setter/getter, tuning-range getter, raw-gain mode/code
  * setters, gain-code getter and cancel_async may be called from the callback;
@@ -228,11 +230,19 @@ uint64_t birriasdr_get_center_freq(const birriasdr_dev_t *dev);
  * the filter fields it owns and the rate-dependent capture bits, but cannot
  * confirm that the 10, 20 and 80 MSps digital class latch took effect.
  * This is not a calibrated passband or an alias-rejection guarantee.
+ * 5000000, 2500000, 1250000 and 625000 run the hardware at 10 MSps and halve
+ * it on the host, one half-band filter per halving: passband the inner 80
+ * percent of the span, stopband 92.8 dB down, and two more bits of output.
  */
 int birriasdr_set_sample_rate(birriasdr_dev_t *dev, uint32_t samples_per_second);
 
 /** Return the nominal configured complex sample rate, or 0 for NULL. */
 uint32_t birriasdr_get_sample_rate(const birriasdr_dev_t *dev);
+
+/** The sample value of full scale at the set rate: 8192 at the native rates,
+ * 32768 at the decimated ones, whose samples carry two more bits.
+ */
+uint32_t birriasdr_get_full_scale(const birriasdr_dev_t *dev);
 
 /** The USB endpoint burst the next read programs, 1 to 15, or 0 for the
  * BIRRIA_BURST environment variable, else the ROM's setting. A burst above the

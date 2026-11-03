@@ -11,11 +11,11 @@ converts samples to the requested format without resampling.
 | --- | --- |
 | Driver key | `driver=birria`. A dongle is selected by enumeration order with `index=N` |
 | Serial | On a Flipper One, the onboard chip's `serial` is the Flipper's own name, as its hostname is set at first boot, such as `flipperone-45d248`: from the device tree's serial number, else the SoC's, else the machine ID. Elsewhere, and with more than one dongle, there is none |
-| Sample rates | 10, 20, 40 and 80 MSps, the native rates. The module does not resample, so an application that needs a lower rate decimates the stream itself |
+| Sample rates | 10, 20, 40 and 80 MSps, the native rates, and 5, 2.5, 1.25 and 0.625 MSps, which the library decimates from 10 MSps with half-band filters: passband the inner 80 percent of the span, stopband 92.8 dB down. The module does not resample to other rates |
 | Antennas | `RX0` and `RX1`, receive chains 0 and 1, each with its own antenna connector, and `AUTO`, which captures the stronger chain, compared at the start of a stream and after each retune. Changing it restarts a running stream, as for a rate change |
-| Bandwidth | The receive filters the current rate can use: 40 or 80 MHz at 80 MSps, 20 or 40 MHz at 40 MSps, and the span's own at 10 and 20 MSps. A request gets the smallest at least as wide; a running stream restarts, as for a rate change |
+| Bandwidth | The receive filters the current rate can use: 40 or 80 MHz at 80 MSps, 20 or 40 MHz at 40 MSps, and the span's own at 10 and 20 MSps. Below 10 MSps it is the 10 MSps filter's, and the decimation filters set the passband. A request gets the smallest at least as wide; a running stream restarts, as for a rate change |
 | Frequency correction | In ppm, rounded to whole ppm, through `birriasdr_set_freq_correction()`. It retunes at once and does not correct the sample clock |
-| Stream formats | `CS16` (native, raw) and `CF32` |
+| Stream formats | `CS16` (native, raw) and `CF32`. `CS16` full scale is 8192 at the native rates and 32768 below 10 MSps, where decimation keeps two more bits; `getNativeStreamFormat()` reports it and `CF32` is scaled to match |
 | Stream arguments | `buffer_samples`, the samples per buffer handed to the application, a multiple of 2048 up to 262144, default 16384, and `transfers`, the USB transfers kept queued, 4 to 256, default the library's 64. Larger buffers cost less CPU and add latency. An invalid value fails `setupStream()` |
 | Stream MTU | `buffer_samples`. Applications such as CubicSDR and SoapyRemote read at most the MTU per call |
 | DC offset mode | Automatic (default) or off. Automatic takes the library's DC estimate (`birriasdr_get_dc_offset()`), the digital gain stage's truncation, out of `CF32`. `CS16` is always raw |
@@ -32,7 +32,7 @@ rates. The next read returns `SOAPY_SDR_OVERFLOW`, and samples at the old rate
 are dropped. If the read cannot restart, later reads return
 `SOAPY_SDR_STREAM_ERROR`. A request within 1 Hz of a listed rate is set to
 exactly that rate, and any other rate is refused. The module has no hardware
-timestamps, no serial number and no sensors.
+timestamps and no sensors.
 
 Errors from tuning, sample-rate changes and gain changes are logged, not
 thrown, because some front ends do not catch exceptions from these calls and

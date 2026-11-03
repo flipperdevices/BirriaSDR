@@ -56,7 +56,7 @@ Run the help command to see the accepted options:
 | `--host HOST` | `127.0.0.1` | Selects the UDP destination address |
 | `--port PORT` | `1234` | Selects a destination port from 1 to 65,535 |
 | `--frequency HZ` | Device default | Selects the receiver center frequency in whole hertz, from 2156 to 2610 MHz (2190 to 2610 MHz on generic-ID boards) or 4500 to 6200 MHz. Another value fails with `UNSUPPORTED` |
-| `--rate SPS` | `40000000` | Selects 10, 20, 40 or 80 MSps complex. The span equals the rate |
+| `--rate SPS` | `40000000` | Selects 10, 20, 40 or 80 MSps complex, or 5, 2.5, 1.25 or 0.625 MSps decimated on the host. The span equals the rate |
 | `--device INDEX` | `0` | Selects a device from the `birria_rx --list` output |
 | `--packet-samples COUNT` | `2048` | Selects 1 to 16,376 complex samples per datagram |
 | `--recovery COUNT` | `3` | Selects the bounded full restart budget, and zero disables recovery |
@@ -89,9 +89,9 @@ The following command sends to another host and disables automatic recovery:
 | Property | Value |
 | --- | --- |
 | Transport | Connected UDP sender with nonblocking writes |
-| Sample rate | 10, 20, 40 or 80 MSps complex, selected with `--rate`. The default is 40 MSps |
+| Sample rate | 10, 20, 40 or 80 MSps complex, or 5, 2.5, 1.25 or 0.625 MSps decimated on the host, selected with `--rate`. The default is 40 MSps |
 | Sample layout | Interleaved signed 16-bit I, Q pairs |
-| Source range | −8192 to 8191 for each unshifted 14-bit component |
+| Source range | −8192 to 8191 for each unshifted 14-bit component, or −32768 to 32767 at the decimated rates, which keep two more bits |
 | Byte order | Little-endian |
 | Datagram size | Exactly the `--packet-samples` count, except the last datagram before a gap or at shutdown, which can be shorter |
 | Default payload | 2,048 complex samples, 8,192 bytes |
@@ -184,9 +184,10 @@ instructions](../README.md#build-and-try) describe the supported host setup.
 
 ### The spectrum level looks low
 
-Remember that the source preserves 14-bit values without shifting them into the
-full signed 16-bit range. This affects the displayed full scale reference, not
-the number of source bits delivered.
+Remember that at the native rates the source preserves 14-bit values without
+shifting them into the full signed 16-bit range. This affects the displayed full
+scale reference, not the number of source bits delivered. The decimated rates
+use the full range.
 
 ## Test the UDP packetizer
 

@@ -442,25 +442,26 @@ SoapySDR::RangeList SoapyBirria::getFrequencyRange(const int, const size_t,
     return ranges;
 }
 
-/* Rates the hardware produces without resampling. The library cannot list its
- * rates, so add one here when the backend gains it.
+/* The library's rates: the hardware's native ones, and those below 10 MSps by a
+ * power of two, which it decimates. The library cannot list its rates, so add
+ * one here when the backend gains it.
  */
-static const double kNativeRates[] = {10e6, 20e6, 40e6, 80e6};
+static const double kRates[] = {625e3, 1.25e6, 2.5e6, 5e6, 10e6, 20e6, 40e6, 80e6};
 
-/* Accept only a native rate and pass it to the library. The library requires
+/* Accept only a listed rate and pass it to the library. The library requires
  * this setter to run alone on the handle, so it holds the control lock
  * exclusively, which also keeps a stream from starting meanwhile.
  */
 void SoapyBirria::setSampleRate(const int, const size_t, const double rate)
 {
     std::unique_lock<std::shared_mutex> control(controlMutex_);
-    /* Match the request within 1 Hz of a native rate and forward that exact
+    /* Match the request within 1 Hz of a listed rate and forward that exact
      * rate, so neither a huge value nor a fractional one reaches the library.
      */
-    const double *native = std::find_if(std::begin(kNativeRates), std::end(kNativeRates),
+    const double *native = std::find_if(std::begin(kRates), std::end(kRates),
                                         [rate](double n) { return std::fabs(rate - n) < 1.0; });
-    if (native == std::end(kNativeRates)) {
-        SoapySDR::log(SOAPY_SDR_ERROR, "birria: the sample rate must be a native rate");
+    if (native == std::end(kRates)) {
+        SoapySDR::log(SOAPY_SDR_ERROR, "birria: the sample rate must be a listed rate");
         return;
     }
     if (static_cast<uint32_t>(*native) == static_cast<uint32_t>(rate_))
@@ -553,10 +554,10 @@ double SoapyBirria::getSampleRate(const int, const size_t) const
     return rate_;
 }
 
-/* List the native rates from lowest to highest. */
+/* List the rates from lowest to highest. */
 std::vector<double> SoapyBirria::listSampleRates(const int, const size_t) const
 {
-    return std::vector<double>(std::begin(kNativeRates), std::end(kNativeRates));
+    return std::vector<double>(std::begin(kRates), std::end(kRates));
 }
 
 /* The library delivers CS16. CF32 is a scaled copy, with the library's DC
@@ -571,7 +572,9 @@ std::vector<std::string> SoapyBirria::getStreamFormats(const int, const size_t) 
 /* Report the native format and its full-scale value. */
 std::string SoapyBirria::getNativeStreamFormat(const int, const size_t, double &fullScale) const
 {
-    fullScale = 8192.0; /* signed 14-bit samples carried in int16 */
+    /* Signed 14-bit samples carried in int16, or 16-bit below 10 MSps, where
+     * the library's decimation keeps two more bits. */
+    fullScale = birriasdr_get_full_scale(dev_);
     return SOAPY_SDR_CS16;
 }
 
@@ -939,7 +942,7 @@ int SoapyBirria::readLocked(void *const *buffs, const size_t numElems,
         } else if (cs16_) {
             std::memcpy(static_cast<int16_t *>(buffs[0]) + 2 * count, in, 4 * n);
         } else {
-            constexpr float kScale = 1.0f / 8192.0f;
+            const float kScale = 1.0f / static_cast<float>(birriasdr_get_full_scale(dev_));
             float *out = static_cast<float *>(buffs[0]) + 2 * count;
             float dc_i = 0, dc_q = 0;
             if (dcAuto_.load())

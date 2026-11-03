@@ -65,7 +65,8 @@ static void usage(FILE *file, const char *program)
             "  --host HOST             UDP destination (default " DEFAULT_HOST ")\n"
             "  --port PORT             UDP destination port (default " DEFAULT_PORT ")\n"
             "  --frequency HZ          Center frequency for the receiver\n"
-            "  --rate SPS              Sample rate, 10, 20, 40 or 80 million (default 40000000)\n"
+            "  --rate SPS              Sample rate, 10, 20, 40 or 80 million, or 5, 2.5, 1.25 or\n"
+            "                          0.625 million decimated (default 40000000)\n"
             "  --device INDEX          Device index (default 0)\n"
             "  --packet-samples COUNT  Complex samples per datagram (default 2048, max 16376)\n"
             "  --recovery COUNT        Full stream restart budget (default 3, 0 disables)\n"
@@ -409,9 +410,9 @@ int main(int argc, char **argv)
     }
     if (streaming) {
         fprintf(stderr,
-                "Sending %" PRIu32 " MSps CS16 to %s:%s in packets of %u samples."
+                "Sending %g MSps CS16 to %s:%s in packets of %u samples."
                 " Press Ctrl-C to stop.\n",
-                birriasdr_get_sample_rate(dev) / 1000000u, options.host, options.port,
+                birriasdr_get_sample_rate(dev) / 1e6, options.host, options.port,
                 options.packet_samples);
         result = birriasdr_read_async(dev, send_samples, &stream, 0, 0);
         atomic_store(&watch.done, true);

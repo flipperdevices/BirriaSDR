@@ -214,20 +214,34 @@ uint64_t birriasdr_get_center_freq(const birriasdr_dev_t *dev)
 }
 
 /* The backend validates the rate and programs the matching capture tap and
- * filter profile at preparation. No host decimator is hidden here.
+ * filter profile at preparation. A rate below 10 MSps by a power of two runs
+ * the hardware at 10 MSps and halves it on the host, in decimate.c.
  */
 int birriasdr_set_sample_rate(birriasdr_dev_t *dev, uint32_t rate)
 {
+    unsigned decimation = 0;
+    uint32_t hardware = rate;
     BS_TRY(require_idle(dev));
-    BS_TRY(dev->backend->validate(dev->frequency, rate, &dev->gain));
-    dev->rate = rate;
+    for (unsigned k = 1; k <= BS_DECIMATION_MAX; ++k)
+        if (rate == BS_DECIMATION_BASE >> k) {
+            decimation = k;
+            hardware = BS_DECIMATION_BASE;
+        }
+    BS_TRY(dev->backend->validate(dev->frequency, hardware, &dev->gain));
+    dev->rate = hardware;
+    dev->decimation = decimation;
     return 0;
 }
 
 /* The nominal complex rate is configuration metadata, not measured timing. */
 uint32_t birriasdr_get_sample_rate(const birriasdr_dev_t *dev)
 {
-    return dev ? dev->rate : 0;
+    return dev ? dev->rate >> dev->decimation : 0;
+}
+
+uint32_t birriasdr_get_full_scale(const birriasdr_dev_t *dev)
+{
+    return dev && dev->decimation ? 32768 : 8192;
 }
 
 /* Programmed when a read starts, like the rate. */
@@ -699,9 +713,11 @@ int birriasdr_read_sync(birriasdr_dev_t *dev, int16_t *iq, uint32_t count, uint3
     int result;
     if (n_read)
         *n_read = 0;
-    if (!dev || !iq || !n_read || !count || count % BS_PACKET_SAMPLES)
+    if (!dev || !iq || !n_read || !count || count % BS_PACKET_SAMPLES ||
+        count > UINT32_MAX >> dev->decimation)
         return BIRRIASDR_ERROR_INVALID;
-    result = bs_stream(dev, copy_sync, &buffer, 64, 16384, count / bs_packet_samples(dev));
+    result = bs_stream(dev, copy_sync, &buffer, 0, 16384,
+                       (count << dev->decimation) / bs_packet_samples(dev));
     *n_read = buffer.received;
     if (!result && buffer.received != count)
         return BIRRIASDR_ERROR_PROTOCOL;

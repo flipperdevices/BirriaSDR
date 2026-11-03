@@ -22,6 +22,13 @@ struct delivery {
     uint64_t delivered, segment_start;
     int staged_result;
     bool holdback, staged;
+    /* Below 10 MSps: payloads decode into native and are halved into iq once
+     * confirmed. The AGC measures them before that, so it still sees signals
+     * the filters remove, which can clip the ADC all the same. */
+    struct bs_decimator *decimator;
+    int16_t *native;
+    unsigned packets; /* packets halved; the AGC measures one in four, as at 10 MSps */
+    bool probing;
 };
 
 /* Deliver only complete validated samples. A short final buffer is allowed;
@@ -32,7 +39,9 @@ static void flush_samples(struct delivery *delivery)
     if (!delivery->used)
         return;
     /* The automatic antenna's first comparison withholds the read's first samples. */
-    if (bs_agc_measure(delivery->dev, delivery->iq, delivery->used) && !delivery->delivered) {
+    bool probing = delivery->decimator ? delivery->probing :
+                   bs_agc_measure(delivery->dev, delivery->iq, delivery->used);
+    if (probing && !delivery->delivered) {
         delivery->used = 0;
         return;
     }
@@ -49,15 +58,25 @@ static void flush_samples(struct delivery *delivery)
  */
 static int decode_payload(struct delivery *delivery, const uint8_t *raw)
 {
+    int16_t *iq = delivery->decimator ? delivery->native : delivery->iq + 2u * delivery->used;
     if (bs_packet_samples(delivery->dev) < BS_PACKET_SAMPLES)
-        return bs_decode_iq_halved(raw, delivery->iq + 2u * delivery->used, BS_PACKET_SAMPLES);
-    return bs_decode_iq(raw, delivery->iq + 2u * delivery->used, BS_PACKET_SAMPLES);
+        return bs_decode_iq_halved(raw, iq, BS_PACKET_SAMPLES);
+    return bs_decode_iq(raw, iq, BS_PACKET_SAMPLES);
 }
 
-/* Count the decoded payload, and deliver once the buffer is full. */
+/* Count the decoded payload, or measure and halve it, and deliver once the
+ * buffer is full. */
 static void commit_payload(struct delivery *delivery)
 {
-    delivery->used += bs_packet_samples(delivery->dev);
+    const uint32_t samples = bs_packet_samples(delivery->dev);
+    if (delivery->decimator) {
+        if (delivery->packets++ % 4 == 0)
+            delivery->probing = bs_agc_measure(delivery->dev, delivery->native, samples);
+        delivery->used += (uint32_t)bs_decimate(delivery->decimator, delivery->native, samples,
+                                                delivery->iq + 2u * delivery->used);
+    } else {
+        delivery->used += samples;
+    }
     if (delivery->used == delivery->capacity)
         flush_samples(delivery);
 }
@@ -114,6 +133,8 @@ static int receive_gap(void *context, uint32_t state, uint64_t packets)
     birriasdr_dev_t *dev = delivery->dev;
     delivery->staged = false;
     flush_samples(delivery);
+    if (delivery->decimator) /* the samples on either side are not continuous */
+        bs_decimator_reset(delivery->decimator, dev->decimation);
     struct birriasdr_recovery_event event = {
         .next_sample = delivery->delivered, .attempt = next_attempt(delivery),
         .error = BIRRIASDR_ERROR_OVERRUN, .previous = dev->stats
@@ -297,6 +318,8 @@ static int capture_once(struct delivery *delivery, uint32_t depth, uint32_t pack
     delivery->segment_start = delivery->delivered;
     delivery->holdback = !packets && dev->recovery_limit && dev->recovery_callback;
     delivery->staged = false;
+    if (delivery->decimator)
+        bs_decimator_reset(delivery->decimator, dev->decimation);
     pthread_mutex_lock(&dev->control_mutex);
     dev->control_ready = false;
     dev->control_error = 0;
@@ -424,8 +447,14 @@ static int stream_pinned(birriasdr_dev_t *dev, birriasdr_read_async_cb_t callbac
     delivery = (struct delivery){.dev = dev, .callback = callback, .context = context,
                                 .capacity = buffer_samples};
     delivery.iq = calloc((size_t)buffer_samples * 2, sizeof(*delivery.iq));
+    bool buffers = delivery.iq != NULL;
+    if (dev->decimation) {
+        delivery.decimator = malloc(sizeof(*delivery.decimator));
+        delivery.native = malloc(2 * BS_PACKET_SAMPLES * sizeof(*delivery.native));
+        buffers = buffers && delivery.decimator && delivery.native;
+    }
     bs_agc_start(dev);
-    if (delivery.iq) {
+    if (buffers) {
         for (;;) {
             bool can_retry;
             result = capture_once(&delivery, depth, packets, &can_retry);
@@ -453,6 +482,8 @@ static int stream_pinned(birriasdr_dev_t *dev, birriasdr_read_async_cb_t callbac
     dev->stats.packets = total_packets;
     dev->stats.usb_bytes = total_bytes;
     free(delivery.iq);
+    free(delivery.decimator);
+    free(delivery.native);
     pthread_mutex_lock(&dev->control_mutex);
     dev->stream_continuous = false;
     atomic_store(&dev->run_state, BS_IDLE);

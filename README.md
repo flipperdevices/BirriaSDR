@@ -78,9 +78,9 @@ For more detail, see:
 | Hardware | COMFAST dongle `3574:6211`, or a board with MediaTek's generic ID `0e8d:7961`, with an MT7961 digital die and an MT7972 analog die |
 | Frequency tuning | 2156 to 2610 MHz, or 2190 to 2610 MHz on generic-ID boards, and 4500 to 6200 MHz, including live changes and band switches. Sensitivity is unverified; 5 GHz reception was checked from 5250 to 5815 MHz |
 | Tuning step | Nominally 28.61 Hz, using the full 20-bit fraction. Requests are in whole hertz with no Wi-Fi channel restriction. The physical response to fine steps is still unmeasured |
-| Sample rate | 10, 20, 40 or 80 MSps complex. The default is 40 MSps |
+| Sample rate | 10, 20, 40 or 80 MSps complex, and 5, 2.5, 1.25 or 0.625 MSps decimated on the host from 10 MSps with half-band filters, passband 80 percent of the span and stopband 92.8 dB down. The default is 40 MSps |
 | Sampled bandwidth | A span equal to the sample rate, with nominal analog and digital settings for that span, or a 40 MHz filter at 80 MSps and a 20 MHz one at 40 MSps. The 10 MSps rate uses the 20 MHz analog setting with a narrower digital filter. See [filter characteristics](docs/mt7921.md#filtering) for rolloff and aliasing limits |
-| Sample resolution | Signed 14-bit I and Q, from −8192 to 8191 |
+| Sample resolution | Signed 14-bit I and Q, from −8192 to 8191. The decimated rates keep two more bits, from −32768 to 32767 |
 | Receive channels | One at a time, chain 0 or chain 1, each with its own antenna connector, or the stronger of the two chosen automatically |
 | Transmit | None, receive only |
 | Gain | Calibrated in whole dB from a measured table: 0 to 46 dB at 2.4 GHz and 0 to 40 dB at 5 GHz, within about 1 dB on two boards and both receive chains. Raw codes for LNA 0 to 5, filter stage 0 to 8 and digital 0 to 12 stay available |
@@ -130,13 +130,15 @@ The last command records eight million complex samples from device 0 with fixed
 manual gain codes (LNA 2, filter stage 8, digital 0). Leave out `manual` to
 release the gain overrides, and leave out the sample count to record until you
 press Ctrl-C. The file holds little-endian signed 16-bit **I, Q** pairs, with
-each component between −8192 and 8191. The recorder applies no averaging or
-decimation, and it refuses to overwrite an existing file. Always check the exit
+each component between −8192 and 8191, or −32768 and 32767 at the decimated
+rates. At the native rates there is no averaging or decimation, and the
+recorder refuses to overwrite an existing file. Always check the exit
 status. An error means the capture is incomplete or its continuity could not be
 confirmed, even if the file contains samples.
 
 To use another sample rate, pass `--rate` with 10000000, 20000000, 40000000 or
-80000000. The span equals the rate:
+80000000, or a decimated 5000000, 2500000, 1250000 or 625000. The span equals
+the rate:
 
 ```sh
 ./build/birria_rx --rate 20000000 narrow.cs16 4000000 manual

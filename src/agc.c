@@ -169,9 +169,11 @@ int birriasdr_get_dc_offset(const birriasdr_dev_t *dev, float *i, float *q)
     int_fast64_t count;
     if (!dev || !i || !q)
         return BIRRIASDR_ERROR_INVALID;
+    /* Measured before decimation, which passes DC unchanged and then scales it. */
+    const double scale = birriasdr_get_full_scale(dev) / 8192.0;
     count = atomic_load(&dev->agc.dc_count);
-    *i = count ? (float)((double)atomic_load(&dev->agc.dc_i) / count) : 0.0f;
-    *q = count ? (float)((double)atomic_load(&dev->agc.dc_q) / count) : 0.0f;
+    *i = count ? (float)(scale * (double)atomic_load(&dev->agc.dc_i) / count) : 0.0f;
+    *q = count ? (float)(scale * (double)atomic_load(&dev->agc.dc_q) / count) : 0.0f;
     return 0;
 }
 

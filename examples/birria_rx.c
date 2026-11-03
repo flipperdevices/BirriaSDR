@@ -143,7 +143,7 @@ int main(int argc, char **argv)
         return list_devices();
     if (parse_arguments(argc, argv, &arguments)) {
         fprintf(stderr,
-                "Usage: %s --list | [--frequency Hz] [--rate 10000000|20000000|40000000|80000000]"
+                "Usage: %s --list | [--frequency Hz] [--rate 625000..80000000, a native or halved rate]"
                 " output.cs16 [complex-samples [manual]]\n",
                 argv[0]);
         return 1;
