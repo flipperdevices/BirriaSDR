@@ -20,8 +20,8 @@ struct delivery {
     uint32_t capacity, used;
     uint32_t restarts;
     uint64_t delivered, segment_start;
-    uint8_t held[BS_PAYLOAD_BYTES];
-    bool holdback, held_valid;
+    int staged_result;
+    bool holdback, staged;
 };
 
 /* Deliver only complete validated samples. A short final buffer is allowed;
@@ -42,36 +42,54 @@ static void flush_samples(struct delivery *delivery)
     delivery->used = 0;
 }
 
-/* Reorder one complete raw Q,I payload into public I,Q pairs. The fixed
- * format supplies 2048 samples (1024 at 10/20 MSps); callback capacity is a whole
- * number of full-rate packets, which also divides evenly at 20 MSps.
+/* Reorder one complete raw Q,I payload into public I,Q pairs just past the
+ * delivered ones, without counting them. The fixed format supplies 2048
+ * samples (1024 at 10/20 MSps); callback capacity is a whole number of
+ * full-rate packets, which also divides evenly at 20 MSps.
  */
 static int decode_payload(struct delivery *delivery, const uint8_t *raw)
 {
     if (bs_packet_samples(delivery->dev) < BS_PACKET_SAMPLES)
-        BS_TRY(bs_decode_iq_halved(raw, delivery->iq + 2u * delivery->used, BS_PACKET_SAMPLES));
-    else
-        BS_TRY(bs_decode_iq(raw, delivery->iq + 2u * delivery->used, BS_PACKET_SAMPLES));
+        return bs_decode_iq_halved(raw, delivery->iq + 2u * delivery->used, BS_PACKET_SAMPLES);
+    return bs_decode_iq(raw, delivery->iq + 2u * delivery->used, BS_PACKET_SAMPLES);
+}
+
+/* Count the decoded payload, and deliver once the buffer is full. */
+static void commit_payload(struct delivery *delivery)
+{
     delivery->used += bs_packet_samples(delivery->dev);
     if (delivery->used == delivery->capacity)
         flush_samples(delivery);
+}
+
+/* Count a staged payload now that it is confirmed, or fail with its decode error. */
+static int commit_staged(struct delivery *delivery)
+{
+    if (!delivery->staged)
+        return 0;
+    delivery->staged = false;
+    BS_TRY(delivery->staged_result);
+    commit_payload(delivery);
     return 0;
 }
 
 /* With local recovery enabled, the next data header confirms that the prior
  * DMA packet survived the source checks. A gap marker instead invalidates it.
- * Keep its raw bytes until then, so even overwritten sample bits cannot leak
- * into callbacks or cause a spurious decoder failure before the marker arrives.
+ * Stage it decoded but uncounted until then, and keep its decode verdict, so
+ * even overwritten sample bits cannot leak into callbacks or cause a spurious
+ * decoder failure before the marker arrives.
  */
 static int receive_payload(void *context, const uint8_t *raw)
 {
     struct delivery *delivery = context;
-    if (!delivery->holdback)
-        return decode_payload(delivery, raw);
-    if (delivery->held_valid)
-        BS_TRY(decode_payload(delivery, delivery->held));
-    memcpy(delivery->held, raw, sizeof(delivery->held));
-    delivery->held_valid = true;
+    if (!delivery->holdback) {
+        BS_TRY(decode_payload(delivery, raw));
+        commit_payload(delivery);
+        return 0;
+    }
+    BS_TRY(commit_staged(delivery));
+    delivery->staged_result = decode_payload(delivery, raw);
+    delivery->staged = true;
     return 0;
 }
 
@@ -94,7 +112,7 @@ static int receive_gap(void *context, uint32_t state, uint64_t packets)
 {
     struct delivery *delivery = context;
     birriasdr_dev_t *dev = delivery->dev;
-    delivery->held_valid = false;
+    delivery->staged = false;
     flush_samples(delivery);
     struct birriasdr_recovery_event event = {
         .next_sample = delivery->delivered, .attempt = next_attempt(delivery),
@@ -278,7 +296,7 @@ static int capture_once(struct delivery *delivery, uint32_t depth, uint32_t pack
     memset(&dev->stats, 0, sizeof(dev->stats));
     delivery->segment_start = delivery->delivered;
     delivery->holdback = !packets && dev->recovery_limit && dev->recovery_callback;
-    delivery->held_valid = false;
+    delivery->staged = false;
     pthread_mutex_lock(&dev->control_mutex);
     dev->control_ready = false;
     dev->control_error = 0;
@@ -307,9 +325,9 @@ static int capture_once(struct delivery *delivery, uint32_t depth, uint32_t pack
     dev->control_ready = false;
     pthread_mutex_unlock(&dev->control_mutex);
     /* Only a verified clean terminal state releases the final held packet. */
-    if (!result && delivery->held_valid)
-        result = decode_payload(delivery, delivery->held);
-    delivery->held_valid = false;
+    if (!result)
+        result = commit_staged(delivery);
+    delivery->staged = false;
     flush_samples(delivery);
 cleanup:
     pthread_mutex_lock(&dev->control_mutex);
