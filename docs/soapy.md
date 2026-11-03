@@ -15,7 +15,9 @@ converts samples to the requested format without resampling.
 | Antennas | `RX0` and `RX1`, receive chains 0 and 1, each with its own antenna connector, and `AUTO`, which captures the stronger chain, compared at the start of a stream and after each retune. Changing it restarts a running stream, as for a rate change |
 | Bandwidth | The receive filters the current rate can use: 40 or 80 MHz at 80 MSps, 20 or 40 MHz at 40 MSps, and the span's own at 10 and 20 MSps. Below 10 MSps it is the 10 MSps filter's, and the decimation filters set the passband. A request gets the smallest at least as wide; a running stream restarts, as for a rate change |
 | Frequency correction | In ppm, rounded to whole ppm, through `birriasdr_set_freq_correction()`. It retunes at once and does not correct the sample clock |
-| Stream formats | `CS16` (native, raw) and `CF32`. `CS16` full scale is 8192 at the native rates and 32768 below 10 MSps, where decimation keeps two more bits; `getNativeStreamFormat()` reports it and `CF32` is scaled to match |
+| Stream formats | `CS16` (native, raw), `CF32`, and `CS8` and `CU8` for tools that expect 8 bits, raw like `CS16` and louder: rounded from a quarter of the full scale, 3 dB more for each halving below 10 MSps, and clipped, so the noise floor the AGC leaves spans a few steps at every rate instead of rounding to zero; `CU8` is offset by 128 as RTL-SDR tools expect. `CS16` full scale is 8192 at the native rates and 32768 below 10 MSps, where decimation keeps two more bits; `getNativeStreamFormat()` reports it and `CF32` is scaled to match |
+| Time | Each read carries `SOAPY_SDR_HAS_TIME` and the time of its first sample, on the steady clock that `getHardwareTime()` reads. Within a stream the times follow the sample count exactly. After a start or a device gap, which loses an unknown number of samples, they are anchored again to the arrival time, so a gap shows as a jump |
+| Settings | `usb_burst`, the bulk endpoint burst, 1 to 15, or 0 for `BIRRIA_BURST`, else the device's; above 1 it needs the patched descriptor that `mt7921-sdr-hold` sets up. `cpus`, the CPUs the library's stream threads run on, such as `4-7`; empty leaves them unpinned and `default` follows `BIRRIA_CPUS`. A running stream restarts to apply either |
 | Stream arguments | `buffer_samples`, the samples per buffer handed to the application, a multiple of 2048 up to 262144, default 16384, and `transfers`, the USB transfers kept queued, 4 to 256, default the library's 64. Larger buffers cost less CPU and add latency. An invalid value fails `setupStream()` |
 | Stream MTU | `buffer_samples`. Applications such as CubicSDR and SoapyRemote read at most the MTU per call |
 | DC offset mode | Automatic (default) or off. Automatic takes the library's DC estimate (`birriasdr_get_dc_offset()`), the digital gain stage's truncation, out of `CF32`. `CS16` is always raw |
@@ -31,8 +33,7 @@ starts during the change waits for it, up to its timeout, so no read mixes two
 rates. The next read returns `SOAPY_SDR_OVERFLOW`, and samples at the old rate
 are dropped. If the read cannot restart, later reads return
 `SOAPY_SDR_STREAM_ERROR`. A request within 1 Hz of a listed rate is set to
-exactly that rate, and any other rate is refused. The module has no hardware
-timestamps and no sensors.
+exactly that rate, and any other rate is refused. The module has no sensors.
 
 Errors from tuning, sample-rate changes and gain changes are logged, not
 thrown, because some front ends do not catch exceptions from these calls and

@@ -86,6 +86,22 @@ int birriasdr_set_sample_rate(birriasdr_dev_t *, uint32_t rate)
 }
 uint32_t birriasdr_get_sample_rate(const birriasdr_dev_t *) { return stub_rate; }
 uint32_t birriasdr_get_full_scale(const birriasdr_dev_t *) { return stub_rate < 10000000 ? 32768 : 8192; }
+static unsigned stub_burst;
+static std::string stub_cpus = "4-7";
+static bool stub_cpus_set;
+int birriasdr_set_usb_burst(birriasdr_dev_t *, unsigned burst)
+{
+    stub_burst = burst;
+    return 0;
+}
+unsigned birriasdr_get_usb_burst(const birriasdr_dev_t *) { return stub_burst; }
+int birriasdr_set_cpus(birriasdr_dev_t *, const char *list)
+{
+    stub_cpus_set = list != nullptr;
+    stub_cpus = list ? list : "4-7";
+    return 0;
+}
+const char *birriasdr_get_cpus(const birriasdr_dev_t *) { return stub_cpus.c_str(); }
 int birriasdr_set_tuner_gain_mode(birriasdr_dev_t *, int) { return 0; }
 int birriasdr_set_gain_codes(birriasdr_dev_t *, const struct birriasdr_gain *) { return 0; }
 int birriasdr_get_gain_codes(birriasdr_dev_t *, struct birriasdr_gain *gain, int *manual)
@@ -181,7 +197,8 @@ int birriasdr_read_async(birriasdr_dev_t *, birriasdr_read_async_cb_t callback, 
         iq[2 * i + 1] = 0;
     }
     const int end_after = stub_end_after.exchange(0);
-    for (int chunks = 0; !stub_cancel; ++chunks) {
+    uint64_t first = 0;
+    for (int chunks = 0; !stub_cancel; ++chunks, first += 1024) {
         if (end_after && chunks == end_after) {
             stub_reading = false;
             return BIRRIASDR_ERROR_IO;
@@ -189,7 +206,7 @@ int birriasdr_read_async(birriasdr_dev_t *, birriasdr_read_async_cb_t callback, 
         const int16_t center = static_cast<int16_t>(stub_center / 100000000u);
         for (unsigned i = 0; i < 1024; ++i)
             iq[2 * i + 1] = center;
-        callback(iq, 1024, 0, context);
+        callback(iq, 1024, first, context);
         std::this_thread::sleep_for(std::chrono::microseconds(200));
     }
     stub_reading = false;
@@ -571,6 +588,70 @@ int main()
     stream = dev.setupStream(SOAPY_SDR_RX, SOAPY_SDR_CS16);
     CHECK(dev.getStreamMTU(stream) == 16384);
     dev.closeStream(stream);
+
+    /* CS8 and CU8 round a quarter of the full scale to 8 bits, 3 dB louder for
+     * each halving below 10 MSps; CU8 is offset by 128. In the stub I is the
+     * rate in MHz and Q 24: at 5 MSps 5 / 45.3 and 24 / 45.3 round to 0 and 1,
+     * at 625 kSps, full scale 32768 and four halvings, 0 and 24 / 16 to 0 and 2,
+     * and at 40 MSps, which the tests after this one expect, 40 / 16 and 24 / 16
+     * to 3 and 2. */
+    dev.setFrequency(SOAPY_SDR_RX, 0, "RF", 2437e6, {});
+    const struct {
+        double rate;
+        int i, q;
+    } eight[] = {{5e6, 0, 1}, {625e3, 0, 2}, {40e6, 3, 2}};
+    for (const auto &c : eight) {
+        dev.setSampleRate(SOAPY_SDR_RX, 0, c.rate);
+        for (const char *format : {SOAPY_SDR_CS8, SOAPY_SDR_CU8}) {
+            const int offset = std::string(format) == SOAPY_SDR_CU8 ? 128 : 0;
+            stream = dev.setupStream(SOAPY_SDR_RX, format);
+            CHECK(dev.activateStream(stream) == 0);
+            static uint8_t buf[2 * 1024];
+            void *buffs[] = {buf};
+            int flags = 0, n = 0;
+            long long time = 0;
+            while ((n = dev.readStream(stream, buffs, 1024, flags, time, 500000)) == SOAPY_SDR_OVERFLOW) {
+            }
+            CHECK(n > 0);
+            CHECK(buf[0] == c.i + offset && buf[1] == c.q + offset);
+            CHECK(dev.deactivateStream(stream) == 0);
+            dev.closeStream(stream);
+        }
+    }
+
+    /* Reads carry the time of their first sample, advancing with the samples. */
+    stream = dev.setupStream(SOAPY_SDR_RX, SOAPY_SDR_CS16);
+    CHECK(dev.hasHardwareTime() && !dev.hasHardwareTime("other"));
+    const long long before = dev.getHardwareTime();
+    CHECK(dev.activateStream(stream) == 0);
+    {
+        static int16_t buf[2 * 512];
+        void *buffs[] = {buf};
+        long long first = 0, second = 0;
+        int flags = 0;
+        CHECK(dev.readStream(stream, buffs, 512, flags, first, 500000) == 512);
+        CHECK(flags & SOAPY_SDR_HAS_TIME);
+        flags = 0;
+        CHECK(dev.readStream(stream, buffs, 512, flags, second, 500000) == 512);
+        CHECK(flags & SOAPY_SDR_HAS_TIME);
+        CHECK(second - first == 512 * 1000000000ll / 40000000);
+        CHECK(first > before - 1000000000ll && first < dev.getHardwareTime());
+    }
+    CHECK(dev.deactivateStream(stream) == 0);
+    dev.closeStream(stream);
+
+    /* Settings reach the library; invalid ones do not. */
+    CHECK(dev.getSettingInfo().size() == 2);
+    dev.writeSetting("usb_burst", "3");
+    CHECK(stub_burst == 3 && dev.readSetting("usb_burst") == "3");
+    dev.writeSetting("usb_burst", "16");
+    dev.writeSetting("usb_burst", "x");
+    CHECK(stub_burst == 3);
+    dev.writeSetting("cpus", "0,2");
+    CHECK(stub_cpus_set && dev.readSetting("cpus") == "0,2");
+    dev.writeSetting("cpus", "default");
+    CHECK(!stub_cpus_set && dev.readSetting("cpus") == "4-7");
+    CHECK(dev.readSetting("nothing").empty());
 
     puts("SoapySDR native sample rate tests passed");
     return 0;

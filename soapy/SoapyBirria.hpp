@@ -18,9 +18,9 @@
 #include <vector>
 
 /* SoapySDR device for libbirriasdr. Settings that the library supports are
- * wired up, and only native hardware rates are offered. An RX stream runs
- * birriasdr_read_async on a worker thread into a queue, and the reader side
- * converts to CS16 or CF32 without resampling.
+ * wired up, with the library's rates. An RX stream runs birriasdr_read_async
+ * on a worker thread into a queue, and the reader side converts to CS16, CF32,
+ * CS8 or CU8 without resampling.
  */
 class SoapyBirria : public SoapySDR::Device
 {
@@ -94,13 +94,28 @@ public:
     int readStream(SoapySDR::Stream *stream, void *const *buffs, const size_t numElems,
                    int &flags, long long &timeNs, const long timeoutUs = 100000) override;
 
+    bool hasHardwareTime(const std::string &what = "") const override { return what.empty(); }
+    long long getHardwareTime(const std::string &what = "") const override;
+
+    SoapySDR::ArgInfoList getSettingInfo() const override;
+    void writeSetting(const std::string &key, const std::string &value) override;
+    std::string readSetting(const std::string &key) const override;
+
 private:
+    enum class Format { CS16, CF32, CS8, CU8 };
+    /* Samples as the library delivered them, and the time of the first. */
+    struct Chunk {
+        std::vector<int16_t> iq;
+        long long ns = 0;
+    };
+
     static void asyncCallback(const int16_t *iq, uint32_t count, uint64_t first, void *ctx);
     static void recoveryCallback(const birriasdr_recovery_event *event, void *ctx);
-    void onSamples(const int16_t *iq, uint32_t count);
+    void onSamples(const int16_t *iq, uint32_t count, uint64_t first);
     void onGap();
     int readLocked(void *const *buffs, size_t numElems,
-                   std::chrono::steady_clock::time_point deadline, bool &interrupted);
+                   std::chrono::steady_clock::time_point deadline, bool &interrupted,
+                   long long &timeNs, int &flags);
     void commitGainLocked(const birriasdr_gain &next, bool manual);
     void whileIdle(const std::function<void()> &change, const char *restartFailed);
     void markGap();
@@ -126,7 +141,7 @@ private:
     mutable std::mutex gainMutex_; /* guards gain_ across concurrent gain calls */
     birriasdr_gain gain_{2, 8, 0};
     bool streamOpen_ = false;
-    bool cs16_ = false;
+    Format format_ = Format::CF32;
     uint32_t transfers_ = 0;         /* USB transfers kept queued; zero is the library default */
     uint32_t bufferSamples_ = 16384; /* samples per library callback, the stream MTU */
     std::atomic<double> rate_{0};
@@ -145,12 +160,19 @@ private:
     std::mutex readerMutex_;
     std::mutex mutex_;
     std::condition_variable cond_;
-    std::deque<std::vector<int16_t>> queue_; /* an empty chunk marks a gap */
+    std::deque<Chunk> queue_; /* an empty chunk marks a gap */
     size_t queued_ = 0;
     size_t wanted_ = 1; /* samples a waiting read needs before it is woken */
 
-    std::vector<int16_t> current_; /* chunk being read, owned by the reader */
-    size_t offset_ = 0;            /* complex samples already read from current_ */
+    Chunk current_;     /* chunk being read, owned by the reader */
+    size_t offset_ = 0; /* complex samples already read from current_ */
+
+    /* The worker's sample timeline: the library counts the samples it delivers,
+     * not those a gap loses, so after each start and gap the count is anchored
+     * again to the hardware time, the steady clock. Worker thread only. */
+    bool reanchor_ = true;
+    uint64_t anchorSample_ = 0;
+    long long anchorNs_ = 0;
 
     /* Losses since the last report, logged by the reader at most every few seconds */
     void reportLosses();
