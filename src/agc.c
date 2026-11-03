@@ -37,6 +37,7 @@
  * settles.
  */
 #include "internal.h"
+#include <stdlib.h>
 #include <time.h>
 
 #define BS_AGC_TICK_MS 20
@@ -95,6 +96,30 @@ int bs_agc_next(struct bs_agc_state *state, int total, int top, uint64_t mean_sq
     return state->target;
 }
 
+/* Sums, power and peak of interleaved samples, as flat loops over the values
+ * so the compiler vectorizes them; per-sample I and Q branches defeat it.
+ */
+static void measure(const int16_t *iq, uint32_t count, uint64_t *power,
+                    int64_t *sum_i, int64_t *sum_q, int *peak)
+{
+    uint64_t p = 0;
+    int64_t si = 0, sq = 0;
+    int m = 0;
+    for (uint32_t k = 0; k < 2 * count; ++k) {
+        int v = iq[k], a = abs(v);
+        p += (uint32_t)(v * v);
+        m = a > m ? a : m;
+    }
+    for (uint32_t n = 0; n < count; ++n) {
+        si += iq[2 * n];
+        sq += iq[2 * n + 1];
+    }
+    *power = p;
+    *sum_i = si;
+    *sum_q = sq;
+    *peak = m;
+}
+
 /* Called by delivery for every buffer it hands over; true while the automatic
  * antenna's first comparison is running and samples are to be withheld.
  */
@@ -113,17 +138,7 @@ bool bs_agc_measure(birriasdr_dev_t *dev, const int16_t *iq, uint32_t count)
     }
     if (count > BS_AGC_HEAD)
         count = BS_AGC_HEAD;
-    for (uint32_t n = 0; n < count; ++n) {
-        int i = iq[2 * n], q = iq[2 * n + 1];
-        int vi = i < 0 ? -i : i, vq = q < 0 ? -q : q;
-        sum_i += i;
-        sum_q += q;
-        power += (uint64_t)(vi * vi + vq * vq);
-        if (vi > peak)
-            peak = vi;
-        if (vq > peak)
-            peak = vq;
-    }
+    measure(iq, count, &power, &sum_i, &sum_q, &peak);
     if (bs_now_ns() >= dev->agc.dc_skip_until) {
         if (atomic_load(&dev->agc.dc_count) > BS_DC_SPAN) {
             atomic_store(&dev->agc.dc_i, atomic_load(&dev->agc.dc_i) / 2);
