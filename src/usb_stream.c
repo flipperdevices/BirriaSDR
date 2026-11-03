@@ -7,6 +7,12 @@
 #include <string.h>
 #include <time.h>
 
+/* Completions queued before the consumer is woken. Each wakeup costs about as
+ * much as parsing a completion, and four are under 2 ms of samples at 10 MSps;
+ * a shorter run is taken when the consumer's wait times out.
+ */
+#define BS_WAKE_COUNT 4u
+
 struct transfer_slot {
     struct bs_reader *reader;
     struct libusb_transfer *transfer;
@@ -84,7 +90,7 @@ static void LIBUSB_CALL receive_transfer(struct libusb_transfer *transfer)
     pthread_mutex_lock(&reader->mutex);
     slot->pending = false;
     --reader->inflight;
-    bool held = false;
+    bool held = false, wake = true;
     if (!reader->stopping && !reader->error) {
         if (transfer->status != LIBUSB_TRANSFER_COMPLETED) {
             reader->error = transfer->status == LIBUSB_TRANSFER_NO_DEVICE ?
@@ -104,12 +110,14 @@ static void LIBUSB_CALL receive_transfer(struct libusb_transfer *transfer)
                 }
             } else {
                 queue_transfer(reader, transfer);
+                wake = reader->count >= BS_WAKE_COUNT;
             }
         }
         if (!reader->error && !held)
             submit_slot(slot);
     }
-    pthread_cond_broadcast(&reader->ready);
+    if (wake || reader->error)
+        pthread_cond_broadcast(&reader->ready);
     pthread_mutex_unlock(&reader->mutex);
 }
 
@@ -266,7 +274,8 @@ int bs_reader_take(struct bs_reader *reader, const uint8_t **data, size_t *lengt
     while (!reader->count && !reader->error) {
         int wait = pthread_cond_timedwait(&reader->ready, &reader->mutex, &deadline);
         if (wait == ETIMEDOUT) {
-            result = BIRRIASDR_ERROR_TIMEOUT;
+            if (!reader->count)
+                result = BIRRIASDR_ERROR_TIMEOUT;
             break;
         }
         if (wait) {
