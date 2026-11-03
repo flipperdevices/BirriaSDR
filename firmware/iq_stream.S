@@ -59,7 +59,7 @@ SOFTWARE.
  * The host enables local recovery at +96. The words at +100/+104 hold the
  * packet count at the current SRAM epoch and the cumulative gap count.
  * The scratch flag at +108 records whether ICAP is actively producing.
- * A 48-byte event (extended ID 0xf6) precedes each new epoch. It carries the
+ * A 128-byte event (extended ID 0xf6) precedes each new epoch. It carries the
  * fault at header +8, gap count at +12, next data sequence at +36 and nonce
  * at +40. Its four-byte trailer is not data. The host must discard the last
  * held data packet because DMA may have read it while ICAP overwrote it.
@@ -142,7 +142,7 @@ _start:
     swi $r0, [$r6 - 248]
     movi $r0, 0
     swi $r0, [$r6 - 252]  /* 0x54000204: mask DMA interrupts */
-    /* Clear all our ring slots and 64-byte event headers. */
+    /* Clear all our ring slots and 128-byte event headers. */
     load32 $r1, RING
     movi $r2, (RING_COUNT * 4)
 clear_ring:
@@ -150,7 +150,7 @@ clear_ring:
     addi $r2, $r2, -1
     bnez $r2, clear_ring
     load32 $r1, HEADERS
-    movi $r2, (RING_COUNT * 16)
+    movi $r2, (RING_COUNT * 32)
 clear_headers:
     swi.bi $r0, [$r1], 4
     addi $r2, $r2, -1
@@ -160,7 +160,7 @@ clear_headers:
     load32 $r9, PAYLOAD
     movi $r10, RING_COUNT
 initialize_slot:
-    load32 $r0, (0x3800002c + PAYLOAD_BYTES)
+    load32 $r0, (0x3800007c + PAYLOAD_BYTES)
     swi $r0, [$r8 + 0]
     load32 $r0, (0x38000014 + PAYLOAD_BYTES)
     swi $r0, [$r8 + 24]
@@ -170,7 +170,7 @@ initialize_slot:
     swi $r0, [$r8 + 32]
     lwi $r0, [$fp + 4]
     swi $r0, [$r8 + 40]
-    addi $r8, $r8, 64
+    addi $r8, $r8, 128
     addi $r9, $r9, SLOT_STRIDE
     addi $r10, $r10, -1
     bnez $r10, initialize_slot
@@ -280,11 +280,11 @@ wait_source:
     movi $r10, 10
     j drain
 source_ready:
-    slli $r0, $r5, 6
+    slli $r0, $r5, 7
     load32 $r8, HEADERS
     add $r8, $r8, $r0
     /* A slot previously used for a gap must become an ordinary data header. */
-    load32 $r0, (0x3800002c + PAYLOAD_BYTES)
+    load32 $r0, (0x3800007c + PAYLOAD_BYTES)
     swi $r0, [$r8]
     load32 $r0, (0x38000014 + PAYLOAD_BYTES)
     swi $r0, [$r8 + 24]
@@ -295,10 +295,14 @@ source_ready:
     swi $r0, [$r8 + 12]
     /* Direct DMA from SRAM: no CPU copying or sample conversion.
      * USB consumes four bytes past the length in the event's RXD0 word. They come
-     * from the header slot, as zeros after its 44 bytes: read from SRAM after the
+     * from the header slot, as zeros after its 124 bytes: read from SRAM after the
      * payload instead, 8,196 bytes in all, the odd tail left the DMA engine one
      * 8-byte beat off now and then, and a later 128-byte line of the payload came
-     * out with its first unit doubled and its last lost, at every rate. */
+     * out with its first unit doubled and its last lost, at every rate.
+     * The header is 128 bytes, not the 48 it needs, so every event is a whole
+     * number of 128-byte lines and keeps the payload's lines aligned in the USB
+     * aggregate: with 48, an aggregate that reached about 44.6 KiB had the same
+     * lines written eight bytes late. */
     lwi $r0, [$fp + 100]
     sub $r0, $r4, $r0
     andi $r0, $r0, 31
@@ -312,7 +316,7 @@ source_ready:
     swi $r9, [$r0 + 8]
     movi $r1, 0
     swi $r1, [$r0 + 12]
-    load32 $r1, ((48 << 16) | (1 << 14) | PAYLOAD_BYTES)
+    load32 $r1, ((128 << 16) | (1 << 14) | PAYLOAD_BYTES)
     swi $r1, [$r0 + 4]
     dsb
     addi $r5, $r10, 0
@@ -368,10 +372,10 @@ recover_source:
     movi $r1, 0
     swi $r1, [$fp + 108]
     dsb
-    slli $r0, $r5, 6
+    slli $r0, $r5, 7
     load32 $r8, HEADERS
     add $r8, $r8, $r0
-    load32 $r0, 0x3800002c
+    load32 $r0, 0x3800007c
     swi $r0, [$r8]
     swi $r10, [$r8 + 8]
     lwi $r0, [$fp + 104]
@@ -383,15 +387,17 @@ recover_source:
     movi $r0, 0xf6
     swi $r0, [$r8 + 32]
     swi $r4, [$r8 + 36]
-    /* Both marker fragments are in MCU data RAM, not the stopped SRAM path. */
+    /* Both marker fragments are in MCU data RAM, not the stopped SRAM path. The
+     * marker is 128 bytes, like a data header, so the events after it in the
+     * same USB aggregate stay 128-byte aligned. */
     slli $r0, $r5, 4
     add $r0, $r7, $r0
     swi $r8, [$r0]
-    addi $r1, $r8, 44
+    addi $r1, $r8, 124
     swi $r1, [$r0 + 8]
     movi $r1, 0
     swi $r1, [$r0 + 12]
-    load32 $r1, ((44 << 16) | (1 << 14) | 4)
+    load32 $r1, ((124 << 16) | (1 << 14) | 4)
     swi $r1, [$r0 + 4]
     dsb
     addi $r5, $r5, 1

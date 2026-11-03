@@ -291,7 +291,12 @@ static int prepare_once(birriasdr_dev_t *dev, uint32_t packets)
     BS_TRY(mt_configure_rf(dev));
     dev->stats.stage = BIRRIASDR_STAGE_GAIN;
     BS_TRY(mt_apply_gain(dev));
-    BS_TRY(bs_update32(dev, BS_MMIO, 0x74000018, 0xffff, (1u << 21) | (32u << 8) | 100));
+    /* Aggregate up to 128 KiB: sixteen 8,320-byte events, 133,120 bytes, so the
+     * host handles a quarter of the transfers 32 KiB needed. 128 cost the least
+     * CPU of 56, 64, 128 and 255; the packet limit caps an aggregate at 30
+     * events. With 48-byte headers an aggregate past about 44.6 KiB wrote
+     * 128-byte lines eight bytes late. */
+    BS_TRY(bs_update32(dev, BS_MMIO, 0x74000018, 0xffff, (1u << 21) | (128u << 8) | 100));
     BS_TRY(bs_update32(dev, BS_MMIO, 0x7400000c, 0xff, 30));
     dev->stats.stage = BIRRIASDR_STAGE_RF;
     BS_TRY(mt_configure_filter(dev));

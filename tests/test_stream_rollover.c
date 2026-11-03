@@ -28,8 +28,24 @@ static void terminal_count(uint64_t received, uint32_t submitted, int expected)
     CHECK(pthread_mutex_destroy(&dev.control_mutex) == 0);
 }
 
+/* An aggregate of whole 1,024-byte packets arrives with four zero bytes, which
+ * are not events; any other length, or a nonzero pad, passes or fails as is.
+ */
+static void packet_pad(void)
+{
+    static uint8_t bytes[57 * 1024 + 4];
+    size_t length = sizeof(bytes);
+    CHECK(event_bytes(bytes, &length) == 0 && length == 57 * 1024);
+    length = 7 * 8320;
+    CHECK(event_bytes(bytes, &length) == 0 && length == 7 * 8320);
+    bytes[sizeof(bytes) - 1] = 1;
+    length = sizeof(bytes);
+    CHECK(event_bytes(bytes, &length) == BIRRIASDR_ERROR_PROTOCOL);
+}
+
 int main(void)
 {
+    packet_pad();
     terminal_count(UINT32_MAX, UINT32_MAX, 0);
     terminal_count(UINT64_C(1) << 32, 0, 0);
     terminal_count((UINT64_C(1) << 32) + 1, 1, 0);

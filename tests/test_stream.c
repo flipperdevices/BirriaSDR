@@ -82,8 +82,8 @@ int bs_reader_take(struct bs_reader *reader, const uint8_t **data, size_t *lengt
     *length = 0;
     if (model->local_recovery && model->generated &&
         model->generated % 3 == 0 && model->local_gaps < model->generated / 3) {
-        memset(bytes, 0, 48);
-        bs_put_le32(bytes, 0x3800002c);
+        memset(bytes, 0, BS_HEADER_BYTES);
+        bs_put_le32(bytes, 0x38000000u | (BS_HEADER_BYTES - 4));
         bs_put_le32(bytes + 8, model->local_gaps % 2 ? 8 : 9);
         bs_put_le32(bytes + 12, ++model->local_gaps);
         bs_put_le32(bytes + 24, 0x38000014);
@@ -91,7 +91,7 @@ int bs_reader_take(struct bs_reader *reader, const uint8_t **data, size_t *lengt
         bytes[32] = 0xf6;
         bs_put_le32(bytes + 36, model->generated);
         bs_put_le32(bytes + 40, dev->nonce);
-        *length = 48;
+        *length = BS_HEADER_BYTES;
         return 0;
     }
     if (model->generated == model->limit || model->stopped) {

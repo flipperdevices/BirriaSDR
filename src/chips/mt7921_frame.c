@@ -10,20 +10,21 @@
  * framer keeps at most one bounded incomplete event and consumes arbitrary
  * input fragments. Do not assume one libusb completion equals one DMA packet.
  *
- * An I/Q event is 8,240 bytes. Multi-byte wire fields are little-endian:
+ * An I/Q event is 8,320 bytes. Multi-byte wire fields are little-endian:
  *   Offset  Size  Meaning
- *        0     4  RXD0: class 7 in [31:27], length 8,236 in [15:0].
+ *        0     4  RXD0: class 7 in [31:27], length 8,316 in [15:0].
  *       24     4  MCU event word: 0x38000014 + payload size (8,192).
  *       28     1  Event ID 0xed.
  *       32     1  Extended event ID 0xf5.
  *       36     4  Packet sequence, starting at zero for this capture.
  *       40     4  Fresh boot nonce.
- *       44     4  Zeros, which USB takes past the RXD0 length.
- *       48  8192  2,048 raw complex samples, Q16 followed by I16, or at 10
+ *       44    84  Zeros, the last four of which USB takes past the RXD0
+ *                 length. They make the event 65 whole 128-byte lines.
+ *      128  8192  2,048 raw complex samples, Q16 followed by I16, or at 10
  *                 and 20 MSps 1,024 samples, two per 16-byte record followed
  *                 by two zero words.
- * An opted-in recovering read also accepts a 48-byte gap event. Its length
- * words are 0x3800002c/0x38000014 and extended ID is 0xf6. Header offsets 8/12
+ * An opted-in recovering read also accepts a 128-byte gap event, a header
+ * alone. Its length words are 0x3800007c/0x38000014 and extended ID is 0xf6. Header offsets 8/12
  * contain source fault 8 or 9 and a monotonically increasing gap count. The
  * sequence is the NEXT data packet's sequence, not another payload. A marker
  * invalidates the preceding data packet, which the stream layer holds back.
@@ -66,7 +67,7 @@ static int consume_frame(struct bs_framer *framer, const uint8_t *frame, size_t 
         bs_get_le32(frame + 36) != (uint32_t)framer->packets ||
         bs_get_le32(frame + 40) != framer->nonce)
         return BIRRIASDR_ERROR_PROTOCOL;
-    if (length == 48) {
+    if (length == BS_HEADER_BYTES) {
         uint32_t state = bs_get_le32(frame + 8);
         if (!framer->gap || frame[32] != 0xf6 ||
             bs_get_le32(frame + 24) != 0x38000014u ||
@@ -90,7 +91,8 @@ static int frame_length(const uint8_t *header, size_t *length)
 {
     uint32_t word = bs_get_le32(header);
     uint32_t size = word & 0xffff;
-    if (word >> 27 != 7 || (size != 36 && size != 44 && size != BS_FRAME_BYTES - 4))
+    if (word >> 27 != 7 ||
+        (size != 36 && size != BS_HEADER_BYTES - 4 && size != BS_FRAME_BYTES - 4))
         return BIRRIASDR_ERROR_PROTOCOL;
     *length = size + 4;
     return 0;

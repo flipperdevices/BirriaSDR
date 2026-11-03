@@ -13,9 +13,10 @@
 #define BS_TRY(expr) do { int bs_result_ = (expr); if (bs_result_ < 0) return bs_result_; } while (0)
 #define BS_PAYLOAD_BYTES 8192u
 #define BS_PACKET_SAMPLES 2048u
-/* The event before the payload: 44 header bytes and the four zeros USB takes past
- * the RXD0 length. */
-#define BS_HEADER_BYTES 48u
+/* The event before the payload: 44 header bytes, zeros to 124 and the four zeros
+ * USB takes past the RXD0 length. 128 keeps the payload's 128-byte lines aligned
+ * in USB aggregates. A gap marker is a header alone. */
+#define BS_HEADER_BYTES 128u
 #define BS_FRAME_BYTES (BS_HEADER_BYTES + BS_PAYLOAD_BYTES)
 
 enum bs_space { BS_MMIO, BS_UHW, BS_BRIDGE };

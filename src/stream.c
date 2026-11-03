@@ -215,6 +215,21 @@ static int prepare_capture(birriasdr_dev_t *dev, struct bs_reader *reader, uint3
     return result;
 }
 
+/* The bytes of a completion that belong to events. An aggregate whose length is
+ * a whole number of 1,024-byte SuperSpeed packets gains four zero bytes, so the
+ * transfer still ends with a short packet. Events are 40, 128 or 8,320 bytes, so
+ * no completion of events alone is four bytes past such a multiple.
+ */
+static int event_bytes(const uint8_t *bytes, size_t *length)
+{
+    if (*length % 1024 != 4)
+        return 0;
+    if (bs_get_le32(bytes + *length - 4))
+        return BIRRIASDR_ERROR_PROTOCOL;
+    *length -= 4;
+    return 0;
+}
+
 /* Consume independently of the USB event pump. EP0 status reads are deferred
  * until a finite run finishes, cancellation is requested, or progress pauses;
  * hammering EP0 during capture would itself compete with the data endpoint.
@@ -239,6 +254,7 @@ static int receive_loop(birriasdr_dev_t *dev, struct bs_reader *reader,
         if (result != BIRRIASDR_ERROR_TIMEOUT) {
             BS_TRY(result);
             dev->stats.usb_bytes += length;
+            BS_TRY(event_bytes(bytes, &length));
             BS_TRY(bs_framer_feed(framer, bytes, length));
             dev->stats.packets = framer->packets;
             if (length)
@@ -269,6 +285,7 @@ static int receive_loop(birriasdr_dev_t *dev, struct bs_reader *reader,
                     break;
                 BS_TRY(result);
                 dev->stats.usb_bytes += length;
+                BS_TRY(event_bytes(bytes, &length));
                 BS_TRY(bs_framer_feed(framer, bytes, length));
             } while (length);
             dev->stats.packets = framer->packets;

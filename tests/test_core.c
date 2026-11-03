@@ -102,8 +102,8 @@ static int observe_gap(void *context, uint32_t state, uint64_t packets)
  */
 static void test_gap_events(void)
 {
-    uint8_t marker[48] = {0};
-    bs_put_le32(marker, 0x3800002c);
+    uint8_t marker[BS_HEADER_BYTES] = {0};
+    bs_put_le32(marker, 0x38000000u | (BS_HEADER_BYTES - 4));
     bs_put_le32(marker + 8, 9);
     bs_put_le32(marker + 12, 1);
     bs_put_le32(marker + 24, 0x38000014);

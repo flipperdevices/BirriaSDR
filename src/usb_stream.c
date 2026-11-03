@@ -8,10 +8,12 @@
 #include <time.h>
 
 /* Completions queued before the consumer is woken. Each wakeup costs about as
- * much as parsing a completion, and four are under 2 ms of samples at 10 MSps;
+ * much as parsing a completion, and four are under 7 ms of samples at 10 MSps;
  * a shorter run is taken when the consumer's wait times out.
  */
 #define BS_WAKE_COUNT 4u
+
+#define BS_QUEUE_SLOTS ((32u << 20) / BS_USB_BYTES)
 
 struct transfer_slot {
     struct bs_reader *reader;
@@ -169,8 +171,9 @@ static void *pump_events(void *context)
     }
 }
 
-/* Allocate and touch every queue page before starting RF. A 512-slot queue is
- * 32 MiB; its bound prevents unbounded memory growth behind a slow callback.
+/* Allocate and touch every queue page before starting RF. The queue holds
+ * eight completions per transfer, at most 32 MiB; its bound prevents unbounded
+ * memory growth behind a slow callback.
  */
 int bs_reader_create(birriasdr_dev_t *dev, unsigned depth, struct bs_reader **out)
 {
@@ -182,7 +185,7 @@ int bs_reader_create(birriasdr_dev_t *dev, unsigned depth, struct bs_reader **ou
     reader->backpressure = dev->stream_continuous && dev->recovery_limit &&
                            dev->recovery_callback;
     reader->depth = depth;
-    reader->capacity = depth < 64 ? depth * 8 : 512;
+    reader->capacity = depth * 8 < BS_QUEUE_SLOTS ? depth * 8 : BS_QUEUE_SLOTS;
     if (pthread_mutex_init(&reader->mutex, NULL)) {
         free(reader);
         return BIRRIASDR_ERROR_IO;
