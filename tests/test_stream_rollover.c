@@ -22,10 +22,9 @@ static void terminal_count(uint64_t received, uint32_t submitted, int expected)
     birriasdr_dev_t dev = {.backend = &backend, .control_mutex = PTHREAD_MUTEX_INITIALIZER};
     struct bs_reader reader = {.dev = &dev};
     struct bs_framer framer = {.packets = received};
-    uint8_t bytes[BS_USB_BYTES];
     atomic_init(&dev.run_state, BS_CANCELLING);
     dev.io.context = &model;
-    CHECK(receive_loop(&dev, &reader, &framer, 0, bytes) == expected);
+    CHECK(receive_loop(&dev, &reader, &framer, 0) == expected);
     CHECK(pthread_mutex_destroy(&dev.control_mutex) == 0);
 }
 

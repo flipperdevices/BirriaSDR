@@ -30,7 +30,7 @@ struct model {
     const enum fault *sequence;
     unsigned sequence_length;
 };
-struct bs_reader { birriasdr_dev_t *dev; };
+struct bs_reader { birriasdr_dev_t *dev; uint8_t bytes[BS_FRAME_BYTES]; };
 struct observation { birriasdr_dev_t *dev; uint64_t samples; unsigned callbacks; };
 
 /* The test handle is already open; reaching discovery would be a test bug. */
@@ -72,10 +72,13 @@ void bs_reader_destroy(struct bs_reader *reader)
  * more submitted descriptors than it delivered; the host must not await them
  * indefinitely or report a generic timeout instead of the known source fault.
  */
-int bs_reader_take(struct bs_reader *reader, uint8_t *bytes, size_t *length, unsigned timeout)
+int bs_reader_take(struct bs_reader *reader, const uint8_t **data, size_t *length,
+                   unsigned timeout)
 {
     birriasdr_dev_t *dev = reader->dev;
     struct model *model = dev->io.context;
+    uint8_t *bytes = reader->bytes;
+    *data = bytes;
     *length = 0;
     if (model->local_recovery && model->generated &&
         model->generated % 3 == 0 && model->local_gaps < model->generated / 3) {

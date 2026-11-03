@@ -55,9 +55,8 @@
  * increasing sequence and fresh boot nonce; both detect gaps, repeats and stale
  * runs.
  */
-static int consume_frame(struct bs_framer *framer, size_t length)
+static int consume_frame(struct bs_framer *framer, const uint8_t *frame, size_t length)
 {
-    const uint8_t *frame = framer->pending;
     if (length == 40) {
         if (frame[28] != 1 || frame[32] || framer->acknowledgements++)
             return BIRRIASDR_ERROR_PROTOCOL;
@@ -86,21 +85,39 @@ static int consume_frame(struct bs_framer *framer, size_t length)
     return 0;
 }
 
+/* The whole event's length from its RXD0 word, or a protocol error. */
+static int frame_length(const uint8_t *header, size_t *length)
+{
+    uint32_t word = bs_get_le32(header);
+    uint32_t size = word & 0xffff;
+    if (word >> 27 != 7 || (size != 36 && size != 44 && size != BS_FRAME_BYTES - 4))
+        return BIRRIASDR_ERROR_PROTOCOL;
+    *length = size + 4;
+    return 0;
+}
+
 /* USB transfer boundaries are unrelated to DMA event boundaries. Assemble at
  * most one bounded frame, supporting every split point and aggregated events.
- * Invalid headers fail immediately instead of scanning ahead and hiding loss.
+ * An event wholly inside the input is consumed in place; only one split by a
+ * boundary is copied. Invalid headers fail immediately instead of scanning
+ * ahead and hiding loss.
  */
 int bs_framer_feed(struct bs_framer *framer, const uint8_t *data, size_t length)
 {
     while (length) {
         size_t target = 4, copy;
-        if (framer->used >= 4) {
-            uint32_t word = bs_get_le32(framer->pending);
-            uint32_t size = word & 0xffff;
-            if (word >> 27 != 7 || (size != 36 && size != 44 && size != BS_FRAME_BYTES - 4))
-                return BIRRIASDR_ERROR_PROTOCOL;
-            target = size + 4;
+        if (!framer->used && length >= 4) {
+            BS_TRY(frame_length(data, &target));
+            if (length >= target) {
+                BS_TRY(consume_frame(framer, data, target));
+                data += target;
+                length -= target;
+                continue;
+            }
+            target = 4;
         }
+        if (framer->used >= 4)
+            BS_TRY(frame_length(framer->pending, &target));
         copy = target - framer->used;
         if (copy > length)
             copy = length;
@@ -109,7 +126,7 @@ int bs_framer_feed(struct bs_framer *framer, const uint8_t *data, size_t length)
         data += copy;
         length -= copy;
         if (framer->used == target && target != 4) {
-            BS_TRY(consume_frame(framer, target));
+            BS_TRY(consume_frame(framer, framer->pending, target));
             framer->used = 0;
         }
     }

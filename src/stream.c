@@ -181,12 +181,13 @@ static int prepare_capture(birriasdr_dev_t *dev, struct bs_reader *reader, uint3
  * hammering EP0 during capture would itself compete with the data endpoint.
  */
 static int receive_loop(birriasdr_dev_t *dev, struct bs_reader *reader,
-                        struct bs_framer *framer, uint32_t limit, uint8_t *bytes)
+                        struct bs_framer *framer, uint32_t limit)
 {
     uint64_t last_progress = bs_now_ns(), next_poll = 0, expected_packets = 0;
     uint32_t words[16] = {0};
     bool stop_sent = false, terminal = false;
     for (;;) {
+        const uint8_t *bytes;
         size_t length;
         uint64_t now;
         int result;
@@ -195,7 +196,7 @@ static int receive_loop(birriasdr_dev_t *dev, struct bs_reader *reader,
             BS_TRY(stop_capture(dev));
             stop_sent = true;
         }
-        result = bs_reader_take(reader, bytes, &length, 20);
+        result = bs_reader_take(reader, &bytes, &length, 20);
         if (result != BIRRIASDR_ERROR_TIMEOUT) {
             BS_TRY(result);
             dev->stats.usb_bytes += length;
@@ -224,7 +225,7 @@ static int receive_loop(birriasdr_dev_t *dev, struct bs_reader *reader,
         if (terminal && framer->packets >= expected_packets) {
             /* Drain already queued/trailing events: duplicates must fail too. */
             do {
-                result = bs_reader_take(reader, bytes, &length, 20);
+                result = bs_reader_take(reader, &bytes, &length, 20);
                 if (result == BIRRIASDR_ERROR_TIMEOUT)
                     break;
                 BS_TRY(result);
@@ -266,8 +267,8 @@ static bool clean_overrun(const birriasdr_dev_t *dev, int error)
  * never mask device removal or framing corruption. The outer loop decides
  * whether to report a discontinuity and try the committed settings again.
  */
-static int capture_once(struct delivery *delivery, uint8_t *bytes, uint32_t depth,
-                        uint32_t packets, bool *can_retry)
+static int capture_once(struct delivery *delivery, uint32_t depth, uint32_t packets,
+                        bool *can_retry)
 {
     birriasdr_dev_t *dev = delivery->dev;
     struct bs_reader *reader = NULL;
@@ -300,7 +301,7 @@ static int capture_once(struct delivery *delivery, uint8_t *bytes, uint32_t dept
     framer.gap = delivery->holdback ? receive_gap : NULL;
     framer.context = delivery;
     dev->stats.stage = BIRRIASDR_STAGE_STREAM;
-    result = receive_loop(dev, reader, &framer, packets, bytes);
+    result = receive_loop(dev, reader, &framer, packets);
     dev->stats.packets = framer.packets;
     pthread_mutex_lock(&dev->control_mutex);
     dev->control_ready = false;
@@ -384,7 +385,6 @@ static int stream_pinned(birriasdr_dev_t *dev, birriasdr_read_async_cb_t callbac
 {
     struct delivery delivery = {0};
     uint64_t total_packets = 0, total_bytes = 0;
-    uint8_t *bytes;
     uint32_t faults = 0;
     unsigned idle = BS_IDLE;
     int result = BIRRIASDR_ERROR_NO_MEMORY;
@@ -406,12 +406,11 @@ static int stream_pinned(birriasdr_dev_t *dev, birriasdr_read_async_cb_t callbac
     delivery = (struct delivery){.dev = dev, .callback = callback, .context = context,
                                 .capacity = buffer_samples};
     delivery.iq = calloc((size_t)buffer_samples * 2, sizeof(*delivery.iq));
-    bytes = malloc(BS_USB_BYTES);
     bs_agc_start(dev);
-    if (delivery.iq && bytes) {
+    if (delivery.iq) {
         for (;;) {
             bool can_retry;
-            result = capture_once(&delivery, bytes, depth, packets, &can_retry);
+            result = capture_once(&delivery, depth, packets, &can_retry);
             total_packets += dev->stats.packets;
             total_bytes += dev->stats.usb_bytes;
             bool overflow = clean_overrun(dev, result);
@@ -435,7 +434,6 @@ static int stream_pinned(birriasdr_dev_t *dev, birriasdr_read_async_cb_t callbac
     dev->stats.samples = delivery.delivered;
     dev->stats.packets = total_packets;
     dev->stats.usb_bytes = total_bytes;
-    free(bytes);
     free(delivery.iq);
     pthread_mutex_lock(&dev->control_mutex);
     dev->stream_continuous = false;

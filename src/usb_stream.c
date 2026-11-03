@@ -19,7 +19,7 @@ struct bs_reader {
     pthread_mutex_t mutex;
     pthread_cond_t ready;
     pthread_t thread;
-    bool started, stopping, backpressure;
+    bool started, stopping, backpressure, lent;
     int error;
     unsigned depth, inflight, capacity, head, tail, count;
     struct transfer_slot *slots;
@@ -241,11 +241,12 @@ int bs_reader_start(struct bs_reader *reader)
     return result < 0 ? bs_usb_error(result) : 0;
 }
 
-/* Copy one completed transfer while holding the queue lock. The consumer gets
- * independent storage so USB callbacks can immediately reuse their queue slots.
+/* Lend the oldest completed transfer in place. Its queue slot stays occupied,
+ * so USB callbacks cannot overwrite it, until the next take or destroy.
  * CLOCK_REALTIME matches POSIX's default condition clock, including on macOS.
  */
-int bs_reader_take(struct bs_reader *reader, uint8_t *data, size_t *length, unsigned timeout_ms)
+int bs_reader_take(struct bs_reader *reader, const uint8_t **data, size_t *length,
+                   unsigned timeout_ms)
 {
     struct timespec deadline;
     int result = 0;
@@ -253,8 +254,15 @@ int bs_reader_take(struct bs_reader *reader, uint8_t *data, size_t *length, unsi
     deadline.tv_nsec += (long)timeout_ms * 1000000;
     deadline.tv_sec += deadline.tv_nsec / 1000000000;
     deadline.tv_nsec %= 1000000000;
+    *data = NULL;
     *length = 0;
     pthread_mutex_lock(&reader->mutex);
+    if (reader->lent) {
+        reader->lent = false;
+        reader->head = (reader->head + 1) % reader->capacity;
+        --reader->count;
+        resume_transfers(reader);
+    }
     while (!reader->count && !reader->error) {
         int wait = pthread_cond_timedwait(&reader->ready, &reader->mutex, &deadline);
         if (wait == ETIMEDOUT) {
@@ -269,11 +277,9 @@ int bs_reader_take(struct bs_reader *reader, uint8_t *data, size_t *length, unsi
     if (reader->error)
         result = reader->error;
     if (!result && reader->count) {
+        *data = reader->queue + (size_t)reader->head * BS_USB_BYTES;
         *length = reader->lengths[reader->head];
-        memcpy(data, reader->queue + (size_t)reader->head * BS_USB_BYTES, *length);
-        reader->head = (reader->head + 1) % reader->capacity;
-        --reader->count;
-        resume_transfers(reader);
+        reader->lent = true;
     }
     pthread_mutex_unlock(&reader->mutex);
     return result;

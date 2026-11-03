@@ -8,6 +8,7 @@
 struct bs_reader;
 int bs_reader_create(birriasdr_dev_t *dev, unsigned depth, struct bs_reader **out);
 int bs_reader_start(struct bs_reader *reader);
-int bs_reader_take(struct bs_reader *reader, uint8_t *data, size_t *length, unsigned timeout_ms);
+int bs_reader_take(struct bs_reader *reader, const uint8_t **data, size_t *length,
+                   unsigned timeout_ms);
 void bs_reader_destroy(struct bs_reader *reader);
 #endif

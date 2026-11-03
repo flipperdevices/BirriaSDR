@@ -48,6 +48,22 @@ static void test_framing(void)
         CHECK(bs_framer_finish(&f, 1) == 0 && count == 1);
         CHECK(bs_framer_feed(&f, frame, sizeof(frame)) == BIRRIASDR_ERROR_PROTOCOL);
     }
+    /* Completions that hold several events and split others, so events parsed
+     * in place and assembled across a boundary alternate. */
+    static uint8_t run[3 * BS_FRAME_BYTES];
+    for (unsigned i = 0; i < 3; ++i)
+        make_frame(run + i * BS_FRAME_BYTES, i);
+    const size_t chunks[] = {1, 3, 4, 47, 4096, BS_FRAME_BYTES - 1, BS_FRAME_BYTES,
+                             BS_FRAME_BYTES + 1, 2 * BS_FRAME_BYTES + 5, sizeof(run)};
+    for (size_t c = 0; c < sizeof(chunks) / sizeof(chunks[0]); ++c) {
+        unsigned count = 0;
+        struct bs_framer f = {.nonce = 0x12345678, .payload = payload, .context = &count};
+        for (size_t at = 0; at < sizeof(run); at += chunks[c]) {
+            size_t n = sizeof(run) - at < chunks[c] ? sizeof(run) - at : chunks[c];
+            CHECK(bs_framer_feed(&f, run + at, n) == 0);
+        }
+        CHECK(bs_framer_finish(&f, 3) == 0 && count == 3);
+    }
     for (unsigned kind = 0; kind < 4; ++kind) {
         unsigned count = 0;
         struct bs_framer f = {.nonce = 0x12345678, .payload = payload, .context = &count};
