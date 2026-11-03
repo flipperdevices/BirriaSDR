@@ -10,7 +10,7 @@
 struct transfer_slot {
     struct bs_reader *reader;
     struct libusb_transfer *transfer;
-    bool pending;
+    bool pending, dev_mem;
     struct transfer_slot *next;
 };
 
@@ -197,7 +197,12 @@ int bs_reader_create(birriasdr_dev_t *dev, unsigned depth, struct bs_reader **ou
         slot->transfer = libusb_alloc_transfer(0);
         if (!slot->transfer)
             goto allocation_failed;
-        buffer = malloc(BS_USB_BYTES);
+        /* Memory usbfs maps for DMA spares the kernel a bounce buffer and a copy
+         * per transfer. The heap serves where it is unavailable. */
+        buffer = dev->handle ? libusb_dev_mem_alloc(dev->handle, BS_USB_BYTES) : NULL;
+        slot->dev_mem = buffer != NULL;
+        if (!buffer)
+            buffer = malloc(BS_USB_BYTES);
         if (!buffer)
             goto allocation_failed;
         memset(buffer, 0, BS_USB_BYTES);
@@ -289,7 +294,10 @@ void bs_reader_destroy(struct bs_reader *reader)
         for (unsigned i = 0; i < reader->depth; ++i) {
             struct libusb_transfer *transfer = reader->slots[i].transfer;
             if (transfer) {
-                free(transfer->buffer);
+                if (reader->slots[i].dev_mem)
+                    libusb_dev_mem_free(reader->dev->handle, transfer->buffer, BS_USB_BYTES);
+                else
+                    free(transfer->buffer);
                 libusb_free_transfer(transfer);
             }
         }
