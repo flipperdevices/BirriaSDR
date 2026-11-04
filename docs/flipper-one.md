@@ -45,3 +45,5 @@ SoapySDRUtil --find="driver=birria"
 In SDR++ (`sudo apt install sdrpp`), add a `soapy_source` instance in the Module
 Manager, then choose the device in the source menu. The
 [SoapySDR module guide](soapy.md) lists its settings.
+
+To use the receiver from a PC over the network, see [SoapyRemote](soapyremote.md).
