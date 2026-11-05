@@ -41,7 +41,7 @@ flowchart LR
 
 The host programs the radio front end and the capture engine directly through
 their registers. The capture engine writes samples into the chip's internal
-memory. A small original device program, only 1,632 bytes and loaded through the
+memory. A small original device program, only 1,664 bytes and loaded through the
 chip's built-in boot ROM, sends that memory to the host over USB. The library
 then checks the stream and hands complex samples to the application.
 
@@ -90,7 +90,7 @@ For more detail, see:
 | Reference clock | On-board 40 MHz crystal |
 | Host interface | Bulk transfers over USB 3.0 at about 81 MB/s at 10 MSps, 162 MB/s at 20 and 40 MSps and 325 MB/s at 80 MSps |
 | Output format | Interleaved signed 16-bit I and Q (`cs16`). Buffers from the API are native-endian, and recorder files are little-endian |
-| Firmware | Original 1,632-byte RAM program. No vendor firmware and nothing flashed |
+| Firmware | Original 1,664-byte RAM program. No vendor firmware and nothing flashed |
 | Host platforms | Linux, tested on a Raspberry Pi 5, and macOS, tested on an Apple Silicon Mac |
 
 ## Proof of concept

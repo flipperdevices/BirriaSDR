@@ -140,6 +140,14 @@ _start:
     bitci $r0, $r0, 5
     bclr $r0, $r0, 30
     swi $r0, [$r6 - 248]
+    /* 0x540002b4[15:8]: TX FIFO 1 ready threshold, 2. At the reset value of 4 the
+     * last 128-byte read of a descriptor came out one 8-byte beat late now and then,
+     * at 5 often and from 6 always; 1 to 3 were clean, at full rate. */
+    lwi $r0, [$r6 - 76]
+    load32 $r1, 0xffff00ff
+    and $r0, $r0, $r1
+    ori $r0, $r0, (2 << 8)
+    swi $r0, [$r6 - 76]
     movi $r0, 0
     swi $r0, [$r6 - 252]  /* 0x54000204: mask DMA interrupts */
     /* Clear all our ring slots and 128-byte event headers. */
