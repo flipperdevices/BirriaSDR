@@ -3,6 +3,8 @@
  */
 #include "usb_stream.h"
 #include <errno.h>
+#include <limits.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -14,6 +16,31 @@
 #define BS_WAKE_COUNT 4u
 
 #define BS_QUEUE_SLOTS ((32u << 20) / BS_USB_BYTES)
+
+/* Linux charges each queued transfer's buffer, plus under 1 KiB of bookkeeping,
+ * against usbfs_memory_mb, and a submit past it fails. 0 means no limit.
+ */
+unsigned bs_usb_depth_limit(unsigned memory_mb)
+{
+    if (!memory_mb)
+        return UINT_MAX;
+    return (unsigned)(((uint64_t)memory_mb << 20) / (BS_USB_BYTES + 1024u));
+}
+
+/* The kernel's usbfs limit in MiB, 0 when there is none or it cannot be read. */
+unsigned bs_usbfs_memory_mb(void)
+{
+    unsigned mb = 0;
+#ifdef __linux__
+    FILE *file = fopen("/sys/module/usbcore/parameters/usbfs_memory_mb", "r");
+    if (file) {
+        if (fscanf(file, "%u", &mb) != 1)
+            mb = 0;
+        fclose(file);
+    }
+#endif
+    return mb;
+}
 
 struct transfer_slot {
     struct bs_reader *reader;
@@ -182,6 +209,9 @@ int bs_reader_create(birriasdr_dev_t *dev, unsigned depth, struct bs_reader **ou
     if (!reader)
         return BIRRIASDR_ERROR_NO_MEMORY;
     reader->dev = dev;
+    const unsigned limit = bs_usb_depth_limit(bs_usbfs_memory_mb());
+    if (depth > limit)
+        depth = limit < 4 ? 4 : limit;
     reader->backpressure = dev->stream_continuous && dev->recovery_limit &&
                            dev->recovery_callback;
     reader->depth = depth;

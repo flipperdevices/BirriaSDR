@@ -648,8 +648,8 @@ SoapySDR::ArgInfoList SoapyBirria::getStreamArgsInfo(const int, const size_t) co
     transfers.key = "transfers";
     transfers.value = "0";
     transfers.name = "USB transfers";
-    transfers.description = "USB transfers kept queued, 4 to 256. 0 is the library default, "
-                            "64, or 256 on macOS.";
+    transfers.description = "USB transfers kept queued, 4 to 256, lowered on Linux to what "
+                            "usbfs_memory_mb allows. 0 is the library default, 64, or 256 on macOS.";
     transfers.type = SoapySDR::ArgInfo::INT;
     SoapySDR::ArgInfo samples;
     samples.key = "buffer_samples";

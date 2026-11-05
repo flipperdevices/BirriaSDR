@@ -3,6 +3,7 @@
  * Fake libusb completions test ownership; this executable never opens USB.
  */
 #include "usb_stream.h"
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -205,6 +206,9 @@ int main(void)
     struct bs_reader *reader;
     const uint8_t *bytes;
     size_t length;
+    /* 119 transfers fit the default 16 MiB on a Flipper One and 120 fail. */
+    CHECK(bs_usb_depth_limit(16) == 119);
+    CHECK(bs_usb_depth_limit(0) == UINT_MAX);
 #ifdef TEST_WRAP_ALLOCATIONS
     for (unsigned i = 1; i <= 12; ++i) {
         reset_mock(0, 0);
