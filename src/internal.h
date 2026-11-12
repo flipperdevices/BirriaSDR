@@ -70,6 +70,11 @@ struct bs_backend {
     unsigned filter_count;
     /* Receive chains a read can capture; 0 or 1 means only the first. */
     unsigned antenna_count;
+    /* With CAP_CHANNEL_FILTER: how far below the tuned center the chip's 20 MHz
+     * channel filter sits, in Hz. The channel-filtered path tunes this much high
+     * and turns the samples back on the host.
+     */
+    uint32_t filter_offset;
     /* Switch the captured chain during a read, for the automatic antenna. */
     int (*select_chain)(birriasdr_dev_t *, unsigned chain);
     uint32_t default_rate;
@@ -124,6 +129,10 @@ struct birriasdr_dev {
     bool cpus_set;       /* else BIRRIA_CPUS applies */
     uint32_t bandwidth; /* requested filter width in Hz; 0 matches the rate */
     uint8_t antenna;    /* receive chain captured, the choice when automatic */
+    bool channel_filter; /* use the chip's channel-filtered taps where the rate allows */
+    bool dual;          /* capture both chains, birriasdr_read_async_multi() */
+    uint8_t host_burst; /* bMaxBurst the host enumerated for the data endpoint */
+    atomic_uint lane;   /* channel-filtered 40 MSps: the beat word pair of the captured chain */
     bool antenna_auto;  /* choose the stronger chain at start and after retunes */
     bool manual;
     /* Automatic mode runs the host AGC, keeping the codes forced, instead of
@@ -260,13 +269,63 @@ int bs_framer_feed(struct bs_framer *framer, const uint8_t *data, size_t length)
 int bs_framer_finish(const struct bs_framer *framer, uint64_t expected);
 int bs_decode_iq(const uint8_t *raw, int16_t *iq, size_t samples);
 int bs_decode_iq_halved(const uint8_t *raw, int16_t *iq, size_t words);
+int bs_decode_iq_lane(const uint8_t *raw, int16_t *iq, size_t words, unsigned lane);
+int bs_decode_iq_dual(const uint8_t *raw, int16_t *iq0, int16_t *iq1, size_t words);
 
-/* At 10 and 20 MSps the capture packer pads each 16-byte record with two zero
- * words, so a packet carries half as many samples.
+/* Whether a read uses the chip's channel-filtered taps: by default at 20 and
+ * 40 MSps, and for two chains. They arrive in the two-chain format at 40 MSps a
+ * chain, 320 MB/s, so only when the host takes bursts of 3 or more; otherwise,
+ * or with the setting off, the stock taps.
+ */
+static inline bool bs_filtered(const birriasdr_dev_t *dev)
+{
+    if (!dev->channel_filter || !dev->backend ||
+        !(dev->backend->capabilities & BIRRIASDR_CAP_CHANNEL_FILTER) || dev->decimation)
+        return false;
+    return dev->dual || ((dev->rate == 20000000 || dev->rate == 40000000) && dev->host_burst >= 3);
+}
+
+/* Both chains in each 16-byte record, [chain 0 t, chain 1 t, chain 0 t+1,
+ * chain 1 t+1], 40 MSps a chain: every channel-filtered read, which keeps one
+ * lane, and every two-chain read, which keeps both.
+ */
+static inline bool bs_lanes(const birriasdr_dev_t *dev)
+{
+    return dev->dual || bs_filtered(dev);
+}
+
+/* The rate the hardware delivers to the host, a chain. */
+static inline uint32_t bs_native_rate(const birriasdr_dev_t *dev)
+{
+    return bs_lanes(dev) ? 40000000u : dev->decimation ? 10000000u : dev->rate;
+}
+
+/* Half-band stages on the host: below 10 MSps the decimation, and one for the
+ * two-chain format at 20 MSps a chain. */
+static inline unsigned bs_host_halvings(const birriasdr_dev_t *dev)
+{
+    if (dev->decimation)
+        return dev->decimation;
+    return bs_lanes(dev) && dev->rate == 20000000 ? 1u : 0u;
+}
+
+/* The frequency shift a read applies: the chip's 20 MHz channel filter sits this
+ * far below the tuned center, so the channel-filtered path with it tunes this
+ * much high and turns the samples back on the host before any half-band stage.
+ * 0 for every other path.
+ */
+static inline uint32_t bs_filter_offset(const birriasdr_dev_t *dev)
+{
+    return bs_filtered(dev) && bs_filter_width(dev) <= 20000000 ? dev->backend->filter_offset : 0;
+}
+
+/* Hardware samples a packet carries, a chain: the packer at 10 and 20 MSps pads
+ * each 16-byte record with two zero words, and the two-chain format gives each
+ * chain half the words.
  */
 static inline uint32_t bs_packet_samples(const birriasdr_dev_t *dev)
 {
-    return dev->rate <= 20000000 ? BS_PACKET_SAMPLES / 2 : BS_PACKET_SAMPLES;
+    return bs_lanes(dev) || dev->rate <= 20000000 ? BS_PACKET_SAMPLES / 2 : BS_PACKET_SAMPLES;
 }
 /* Power-of-two decimation below the 10 MSps hardware rate, in decimate.c. */
 #define BS_DECIMATION_BASE 10000000u
@@ -276,17 +335,19 @@ static inline uint32_t bs_packet_samples(const birriasdr_dev_t *dev)
 #define BS_HALFBAND_HISTORY (4u * BS_HALFBAND_SIDE - 2u) /* 55 taps less one */
 struct bs_decimator {
     unsigned stages;
+    bool after_channel; /* one stage behind the chip's channel filter: a shorter filter */
     float history[BS_DECIMATION_MAX][2 * BS_HALFBAND_HISTORY];
     float work[2 * (BS_HALFBAND_HISTORY + BS_PACKET_SAMPLES)];
     float planar[6][(BS_HALFBAND_HISTORY + BS_PACKET_SAMPLES) / 2]; /* even, odd and out I, Q */
     float stage[BS_PACKET_SAMPLES];
 };
-void bs_decimator_reset(struct bs_decimator *decimator, unsigned stages);
+void bs_decimator_reset(struct bs_decimator *decimator, unsigned stages, bool after_channel);
 /* samples is a multiple of 2^stages, at most BS_PACKET_SAMPLES; returns the output count. */
 size_t bs_decimate(struct bs_decimator *decimator, const int16_t *in, size_t samples,
                    int16_t *out);
 
 int bs_stream(birriasdr_dev_t *dev, birriasdr_read_async_cb_t callback,
-               void *context, uint32_t depth, uint32_t buffer_samples, uint32_t packets);
+               birriasdr_read_multi_cb_t multi, void *context, uint32_t depth,
+               uint32_t buffer_samples, uint32_t packets);
 
 #endif

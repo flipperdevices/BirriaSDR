@@ -546,6 +546,108 @@ static void test_antenna(void)
     CHECK(pthread_mutex_destroy(&dev.control_mutex) == 0);
 }
 
+/* Channel-filtered 40 MSps records hold both chains; a read keeps one lane and
+ * still validates the other. */
+static void test_lane_samples(void)
+{
+    uint8_t raw[32] = {0};
+    int16_t iq[8];
+    raw[0] = 0xff; raw[1] = 0x1f; raw[2] = 0x00; raw[3] = 0x20;  /* chain 0 t: I -8192, Q 8191 */
+    raw[4] = 0x05;                                               /* chain 1 t: Q 5 */
+    raw[8] = 0xff; raw[9] = 0x3f; raw[10] = 0x01;                /* chain 0 t+1: I 1, Q -1 */
+    raw[14] = 0x07;                                              /* chain 1 t+1: I 7 */
+    raw[16] = 0x03;                                              /* next record, chain 0: Q 3 */
+    raw[20] = 0x09;                                              /* chain 1: Q 9 */
+    CHECK(bs_decode_iq_lane(raw, iq, 8, 0) == 0);
+    CHECK(iq[0] == -8192 && iq[1] == 8191 && iq[2] == 1 && iq[3] == -1);
+    CHECK(iq[4] == 0 && iq[5] == 3 && iq[6] == 0 && iq[7] == 0);
+    CHECK(bs_decode_iq_lane(raw, iq, 8, 1) == 0);
+    CHECK(iq[0] == 0 && iq[1] == 5 && iq[2] == 7 && iq[3] == 0);
+    CHECK(iq[4] == 0 && iq[5] == 9 && iq[6] == 0 && iq[7] == 0);
+    CHECK(bs_decode_iq_lane(raw, iq, 6, 0) == BIRRIASDR_ERROR_INVALID);
+    CHECK(bs_decode_iq_lane(raw, iq, 8, 2) == BIRRIASDR_ERROR_INVALID);
+    raw[7] = 0x40;                                               /* invalid bits in the other lane */
+    CHECK(bs_decode_iq_lane(raw, iq, 8, 0) == BIRRIASDR_ERROR_PROTOCOL);
+}
+
+/* Which path a read uses, the selector nibble, the tuning offset, the host's
+ * half-band stages and the samples per packet follow the setting, the rate,
+ * the host's burst and the chain count. */
+static void test_channel_filter(void)
+{
+    birriasdr_dev_t dev = {0};
+    atomic_init(&dev.run_state, BS_IDLE);
+    atomic_init(&dev.lane, 0);
+    CHECK(pthread_mutex_init(&dev.control_mutex, NULL) == 0);
+    dev.backend = &bs_mt7921_backend;
+    CHECK(birriasdr_get_capabilities(&dev) & BIRRIASDR_CAP_CHANNEL_FILTER);
+    dev.channel_filter = true;
+    for (unsigned rate = 20000000; rate <= 40000000; rate *= 2) {
+        dev.rate = rate;
+        dev.host_burst = 0;                     /* no burst: the stock path */
+        CHECK(birriasdr_get_channel_filter(&dev) && !birriasdr_get_channel_filter_active(&dev));
+        CHECK(!bs_lanes(&dev) && bs_host_halvings(&dev) == 0 && bs_filter_offset(&dev) == 0);
+        CHECK(bs_native_rate(&dev) == rate && birriasdr_get_full_scale(&dev) == 8192);
+        CHECK(bs_packet_samples(&dev) == (rate == 20000000 ? BS_PACKET_SAMPLES / 2 : BS_PACKET_SAMPLES));
+        CHECK(mt_tap_nibble(&dev, 0) == 4 && mt_tap_nibble(&dev, 1) == 5);
+        dev.host_burst = 3;
+        CHECK(birriasdr_get_channel_filter_active(&dev) && bs_lanes(&dev));
+        CHECK(bs_native_rate(&dev) == 40000000 && bs_packet_samples(&dev) == BS_PACKET_SAMPLES / 2);
+        CHECK(mt_tap_nibble(&dev, 0) == 0 && mt_tap_nibble(&dev, 1) == 0);
+    }
+    dev.rate = 20000000;                        /* 20 MHz filter: offset, one half-band */
+    CHECK(bs_filter_offset(&dev) == 1250000 && bs_host_halvings(&dev) == 1);
+    CHECK(birriasdr_get_full_scale(&dev) == 32768);
+    dev.rate = 40000000;                        /* 40 MHz filter: centred, none */
+    CHECK(bs_filter_offset(&dev) == 0 && bs_host_halvings(&dev) == 0);
+    dev.bandwidth = 20000000;                   /* the 20 MHz filter at 40 MSps */
+    CHECK(bs_filter_offset(&dev) == 1250000 && bs_host_halvings(&dev) == 0);
+    dev.bandwidth = 0;
+    dev.rate = 80000000;
+    CHECK(!birriasdr_get_channel_filter_active(&dev) && !bs_lanes(&dev));
+    dev.rate = 10000000;
+    CHECK(!birriasdr_get_channel_filter_active(&dev) && !bs_lanes(&dev));
+    dev.rate = 20000000;
+    CHECK(birriasdr_set_channel_filter(&dev, 0) == 0 && !birriasdr_get_channel_filter(&dev));
+    CHECK(!birriasdr_get_channel_filter_active(&dev) && bs_filter_offset(&dev) == 0);
+    CHECK(mt_tap_nibble(&dev, 0) == 4 && mt_tap_nibble(&dev, 1) == 5);
+    /* Two chains: always the two-chain format, filtered or not. */
+    CHECK(birriasdr_get_channels(&dev) == 1);
+    CHECK(birriasdr_set_channels(&dev, 3) == 0 && birriasdr_get_channels(&dev) == 3);
+    CHECK(bs_lanes(&dev) && !bs_filtered(&dev) && bs_host_halvings(&dev) == 1);
+    CHECK(birriasdr_set_channel_filter(&dev, 1) == 0 && bs_filtered(&dev));
+    CHECK(bs_filter_offset(&dev) == 1250000 && mt_tap_nibble(&dev, 1) == 0);
+    CHECK(birriasdr_read_async(&dev, NULL, NULL, 0, 0) == BIRRIASDR_ERROR_INVALID);
+    CHECK(birriasdr_read_async_multi(&dev, NULL, NULL, 0, 0) == BIRRIASDR_ERROR_INVALID);
+    CHECK(birriasdr_set_channels(&dev, 2) == 0 && birriasdr_get_channels(&dev) == 2);
+    CHECK(birriasdr_get_antenna(&dev) == 1 && !bs_lanes(&dev) == !bs_filtered(&dev));
+    CHECK(birriasdr_set_channels(&dev, 0) == BIRRIASDR_ERROR_INVALID);
+    CHECK(birriasdr_set_channels(&dev, 4) == BIRRIASDR_ERROR_INVALID);
+    atomic_store(&dev.run_state, BS_RUNNING);
+    CHECK(birriasdr_set_channel_filter(&dev, 1) == BIRRIASDR_ERROR_BUSY);
+    CHECK(birriasdr_set_channels(&dev, 3) == BIRRIASDR_ERROR_BUSY);
+    atomic_store(&dev.run_state, BS_IDLE);
+    dev.backend = bs_lookup_id(0x0e8d, 0x7925)->backend;
+    CHECK(birriasdr_set_channel_filter(&dev, 1) == BIRRIASDR_ERROR_UNSUPPORTED);
+    CHECK(birriasdr_set_channels(&dev, 3) == BIRRIASDR_ERROR_UNSUPPORTED);
+    CHECK(birriasdr_set_channel_filter(&dev, 0) == 0 && !birriasdr_get_channel_filter_active(&dev));
+    CHECK(pthread_mutex_destroy(&dev.control_mutex) == 0);
+}
+
+/* Two-chain records: chain 0 in words 0 and 2, chain 1 in 1 and 3. */
+static void test_dual_samples(void)
+{
+    uint8_t raw[16] = {0};
+    int16_t a[4], b[4];
+    raw[0] = 0x01; raw[4] = 0x02; raw[8] = 0x03; raw[14] = 0x04;
+    CHECK(bs_decode_iq_dual(raw, a, b, 4) == 0);
+    CHECK(a[0] == 0 && a[1] == 1 && a[2] == 0 && a[3] == 3);
+    CHECK(b[0] == 0 && b[1] == 2 && b[2] == 4 && b[3] == 0);
+    CHECK(bs_decode_iq_dual(raw, a, b, 2) == BIRRIASDR_ERROR_INVALID);
+    raw[3] = 0x80;
+    CHECK(bs_decode_iq_dual(raw, a, b, 4) == BIRRIASDR_ERROR_PROTOCOL);
+}
+
 /* Tests deliberately run without a dongle, root privileges or vendor firmware. */
 int main(void)
 {
@@ -562,6 +664,9 @@ int main(void)
     test_freq_correction();
     test_bandwidth();
     test_antenna();
+    test_lane_samples();
+    test_channel_filter();
+    test_dual_samples();
     puts("core tests passed");
     return 0;
 }

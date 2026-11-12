@@ -94,20 +94,40 @@ int mt_configure_capture(birriasdr_dev_t *dev)
      * The measured sample counts and USB rates confirm this. The other rates
      * use the dense format with all bits clear.
      */
-    BS_TRY(bs_update32(dev, BS_MMIO, 0x800210b8, 0xf0000,
-                        mt_rate_packed(dev->rate) ? 0x9c020000 : 0x9c000000));
-    BS_TRY(verify_rate_bits(dev, 0x800210b8, 0x20000, mt_rate_packed(dev->rate) ? 0x20000 : 0));
-    BS_TRY(bs_update32(dev, BS_MMIO, 0x830ad440, 0xff, 0x80000013));
-    /* Bits 19:18 select the tap rate, 40 MSps << (3 - m): 3 for 40 MSps, 2 for
-     * 80 MSps. 20 and 10 MSps use the 80 and 40 MSps taps with the packer
-     * above, which keeps one sample in four. Bits 11:8 pick the chain: tap 4
-     * for chain 0, 5 for chain 1.
-     */
-    BS_TRY(bs_update32(dev, BS_MMIO, 0x830ad448, 0x0fffffff,
-                        (mt_rate_fast_tap(dev->rate) ? 0x00880000 : 0x008c0000) |
-                        (4u + dev->antenna) << 8));
-    BS_TRY(verify_rate_bits(dev, 0x830ad448, 0xc0000,
-                            mt_rate_fast_tap(dev->rate) ? 0x80000 : 0xc0000));
+    const bool packed = mt_rate_packed(dev->rate) && !bs_lanes(dev); /* the two-chain format stays dense */
+    BS_TRY(bs_update32(dev, BS_MMIO, 0x800210b8, 0xf0000, packed ? 0x9c020000 : 0x9c000000));
+    BS_TRY(verify_rate_bits(dev, 0x800210b8, 0x20000, packed ? 0x20000 : 0));
+    atomic_store(&dev->lane, dev->antenna);
+    if (dev->dual && !bs_filtered(dev)) {
+        /* Two chains without the channel filter: mode 0x11, bit 21 enables it,
+         * bits 17:16 = 3 sample at 40 MSps, selector 0x0c carries both chains
+         * after the rate profile's filters. */
+        BS_TRY(bs_update32(dev, BS_MMIO, 0x830ad440, 0xff, 0x80000011));
+        BS_TRY(bs_update32(dev, BS_MMIO, 0x830ad448, 0x0fffffff, 0x0023000c));
+        BS_TRY(verify_rate_bits(dev, 0x830ad448, 0x002300ff, 0x0023000c));
+    } else if (bs_filtered(dev)) {
+        /* Mode 0x14 taps the receive path after the chip's channel filter: bit 24
+         * enables it, bits 19:18 = 3 sample it at its 40 MSps channel rate and
+         * selector 0x10 carries both chains, chain 0 in the first lane. The host
+         * keeps the lanes it needs. 0x15 would carry chain 1 alone.
+         */
+        BS_TRY(bs_update32(dev, BS_MMIO, 0x830ad440, 0xff, 0x80000014));
+        BS_TRY(bs_update32(dev, BS_MMIO, 0x830ad448, 0x0fffffff,
+                            0x010c1000 | mt_tap_nibble(dev, dev->antenna) << 8));
+        BS_TRY(verify_rate_bits(dev, 0x830ad448, 0x010cf000, 0x010c1000));
+    } else {
+        BS_TRY(bs_update32(dev, BS_MMIO, 0x830ad440, 0xff, 0x80000013));
+        /* Bits 19:18 select the tap rate, 40 MSps << (3 - m): 3 for 40 MSps, 2 for
+         * 80 MSps. 20 and 10 MSps use the 80 and 40 MSps taps with the packer
+         * above, which keeps one sample in four. Bits 11:8 pick the chain: tap 4
+         * for chain 0, 5 for chain 1.
+         */
+        BS_TRY(bs_update32(dev, BS_MMIO, 0x830ad448, 0x0fffffff,
+                            (mt_rate_fast_tap(dev->rate) ? 0x00880000 : 0x008c0000) |
+                            mt_tap_nibble(dev, dev->antenna) << 8));
+        BS_TRY(verify_rate_bits(dev, 0x830ad448, 0xc0000,
+                                mt_rate_fast_tap(dev->rate) ? 0x80000 : 0xc0000));
+    }
     BS_TRY(bs_update32(dev, BS_MMIO, 0x88009004, 0, 0x0f000000));
     /* Bits 22:21 enable two of the receiver's frame detectors. On each detection
      * the receive path holds its last sample a few times, then reads exact zeros
@@ -208,11 +228,16 @@ static const struct bs_band bands[] = {
 };
 
 /* Live: ICAP tap 4 reads chain 0 and tap 5 chain 1; both receive once chain
- * 1's bank is on, as it is for the automatic antenna.
+ * 1's bank is on, as it is for the automatic antenna. In the two-chain format
+ * both chains arrive and the host changes lanes.
  */
 static int select_chain(birriasdr_dev_t *dev, unsigned chain)
 {
-    return bs_update32(dev, BS_MMIO, 0x830ad448, 0xf00, (4u + chain) << 8);
+    if (bs_lanes(dev)) {
+        atomic_store(&dev->lane, chain);
+        return 0;
+    }
+    return bs_update32(dev, BS_MMIO, 0x830ad448, 0xf00, mt_tap_nibble(dev, chain) << 8);
 }
 
 const struct bs_backend bs_mt7921_backend = {
@@ -221,7 +246,7 @@ const struct bs_backend bs_mt7921_backend = {
     .capabilities = BIRRIASDR_CAP_RX | BIRRIASDR_CAP_RAW_GAIN | BIRRIASDR_CAP_GAIN_DB |
                     BIRRIASDR_CAP_AGC | BIRRIASDR_CAP_LIVE_GAIN | BIRRIASDR_CAP_TUNING |
                     BIRRIASDR_CAP_LIVE_TUNING | BIRRIASDR_CAP_FREQ_CORRECTION |
-                    BIRRIASDR_CAP_FILTER | BIRRIASDR_CAP_ANTENNA,
+                    BIRRIASDR_CAP_FILTER | BIRRIASDR_CAP_ANTENNA | BIRRIASDR_CAP_CHANNEL_FILTER,
     .default_frequency = MT_RF_ANCHOR_HZ,
     .min_frequency = MT_RF_MIN_HZ, .max_frequency = MT_RF_5G_MAX_HZ,
     .bands = bands, .band_count = sizeof(bands) / sizeof(bands[0]),
@@ -229,6 +254,8 @@ const struct bs_backend bs_mt7921_backend = {
     .agc_digital = 1u << 0 | 1u << 6,
     .filters = filters, .filter_count = sizeof(filters) / sizeof(filters[0]),
     .antenna_count = 2,
+    /* Measured: -3 dB at -9.4 and +7.0 MHz, the same at 5200, 5500 and 5785 MHz. */
+    .filter_offset = 1250000,
     .select_chain = select_chain,
     .default_rate = 40000000,
     .validate = validate,

@@ -21,11 +21,13 @@ static void tone(int16_t *iq, size_t samples, double frequency, double amplitude
 }
 
 /* Decimate packet by packet and return the output count. */
+static bool after_channel; /* the one-stage filter behind the chip's channel filter */
+
 static size_t run(struct bs_decimator *d, unsigned stages, const int16_t *in, size_t samples,
                   size_t chunk, int16_t *out)
 {
     size_t produced = 0;
-    bs_decimator_reset(d, stages);
+    bs_decimator_reset(d, stages, after_channel);
     for (size_t at = 0; at < samples; at += chunk)
         produced += bs_decimate(d, in + 2 * at, chunk, out + 2 * produced);
     return produced;
@@ -47,6 +49,26 @@ int main(void)
 {
     static int16_t in[2 * PACKET * PACKETS], out[2 * PACKET * PACKETS], again[2 * PACKET * PACKETS];
     static struct bs_decimator d;
+    /* The stage behind the chip's channel filter: flat to 0.2 of the input rate,
+     * 51 dB down from 0.3, the same edges as the last stage at half the taps. */
+    after_channel = true;
+    {
+        double peak, mean;
+        tone(in, PACKET * PACKETS, 0.19, 2000);
+        size_t n = run(&d, 1, in, PACKET * PACKETS, PACKET, out);
+        CHECK(n == (size_t)PACKET * PACKETS / 2);
+        magnitude(out, n, &peak, &mean);
+        CHECK(fabs(mean - 4 * 2000) < 4 * 2000 * 0.01);
+        tone(in, PACKET * PACKETS, 0.31, 8000);
+        n = run(&d, 1, in, PACKET * PACKETS, PACKET, out);
+        magnitude(out, n, &peak, &mean);
+        CHECK(peak <= 4 * 8000 * 0.0028); /* -51 dB */
+        tone(in, PACKET * PACKETS, -0.33, 8000);
+        n = run(&d, 1, in, PACKET * PACKETS, PACKET, out);
+        magnitude(out, n, &peak, &mean);
+        CHECK(peak <= 4 * 8000 * 0.0028);
+    }
+    after_channel = false;
     for (unsigned stages = 1; stages <= BS_DECIMATION_MAX; ++stages) {
         const double rate = 1.0 / (1u << stages); /* output rate, as a fraction of the input */
         double peak, mean;

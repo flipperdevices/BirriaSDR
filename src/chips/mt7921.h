@@ -61,6 +61,16 @@ static inline bool mt_rate_fast_tap(uint32_t rate)
     return rate == 20000000 || rate == 80000000;
 }
 
+/* The low nibble of the capture selector 0x830ad448[11:8] for a chain. Stock:
+ * tap 4 reads chain 0, tap 5 chain 1. Every two-chain-format read uses 0
+ * (channel-filtered: selector 0x10, after the chip's channel filter; stock two
+ * chains: mode 0x11 ignores these bits) and the host keeps a lane.
+ */
+static inline unsigned mt_tap_nibble(const birriasdr_dev_t *dev, unsigned chain)
+{
+    return bs_lanes(dev) ? 0u : 4u + chain;
+}
+
 /* A mathematical frequency plan, not a claim of analog tuning coverage.
  * nominal_hz_num / nominal_hz_den is exact for the assumed 60 MHz reference.
  * Both bands share this layout; only the VCO multiplier differs.

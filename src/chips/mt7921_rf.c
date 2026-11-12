@@ -288,9 +288,11 @@ static int select_receive_path(birriasdr_dev_t *dev)
         BS_TRY(rf_words(dev, p, receive_pairs, sizeof(receive_pairs) / sizeof(receive_pairs[0])));
         BS_TRY(mt_rf_update(dev, p, 0x160, 0xc0000000, 0));
     }
-    if (dev->antenna || dev->antenna_auto)
+    /* The channel-filtered taps carry chain 0 properly only with chain 1's bank
+     * receiving too: with it off, the first lane bypasses the channel filter. */
+    if (dev->antenna || dev->antenna_auto || bs_lanes(dev))
         BS_TRY(mt_rf_update(dev, 0, 0x1e4, ~0xc0u, 0x3fb0b & ~0xc0u));
-    return bs_update32(dev, BS_MMIO, 0x830ad448, 0xf00, (4u + dev->antenna) << 8);
+    return bs_update32(dev, BS_MMIO, 0x830ad448, 0xf00, mt_tap_nibble(dev, dev->antenna) << 8);
 }
 
 /* Validate the die/crystal, initialize the established channel-6 clock/bias
@@ -314,5 +316,6 @@ int mt_configure_rf(birriasdr_dev_t *dev)
     /* Bias tables and the anchor tune have put every band field back to 2.4 GHz. */
     dev->mt7921.high_band = false;
     dev->mt7921.band_valid = true;
-    return dev->frequency == MT_RF_ANCHOR_HZ && !dev->ppm ? 0 : mt_set_frequency(dev, dev->frequency);
+    return dev->frequency == MT_RF_ANCHOR_HZ && !dev->ppm && !bs_filter_offset(dev) ? 0 :
+           mt_set_frequency(dev, dev->frequency);
 }

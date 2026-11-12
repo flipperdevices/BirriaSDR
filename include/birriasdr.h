@@ -51,7 +51,8 @@ enum birriasdr_capability {
     BIRRIASDR_CAP_LIVE_GAIN = 1u << 7,
     BIRRIASDR_CAP_TUNING = 1u << 8,
     BIRRIASDR_CAP_LIVE_TUNING = 1u << 9,
-    BIRRIASDR_CAP_FREQ_CORRECTION = 1u << 10
+    BIRRIASDR_CAP_FREQ_CORRECTION = 1u << 10,
+    BIRRIASDR_CAP_CHANNEL_FILTER = 1u << 11
 };
 
 /** Discovery includes recognized but unimplemented devices (capabilities=0).
@@ -121,8 +122,9 @@ struct birriasdr_stream_stats {
  * count and first_sample count COMPLEX samples, not scalar components/bytes.
  * The buffer is borrowed until callback return; copy it to retain it. At the
  * native rates there is no host-side averaging, decimation, left shifting, or
- * floating-point conversion. At 10 and 20 MSps the device's capture packer
- * keeps one tap sample in four before the samples reach the host.
+ * floating-point conversion; the channel-filtered path with the 20 MHz filter
+ * only turns them by its offset (birriasdr_set_channel_filter). At 10 and 20 MSps
+ * the device's capture packer drops samples before they reach the host.
  * Run callbacks promptly: a stalled consumer can overrun the device's SRAM.
  * The center-frequency setter/getter, tuning-range getter, raw-gain mode/code
  * setters, gain-code getter and cancel_async may be called from the callback;
@@ -233,8 +235,41 @@ uint64_t birriasdr_get_center_freq(const birriasdr_dev_t *dev);
  * 5000000, 2500000, 1250000 and 625000 run the hardware at 10 MSps and halve
  * it on the host, one half-band filter per halving: passband the inner 80
  * percent of the span, stopband 92.8 dB down, and two more bits of output.
+ * 20 and 40 MSps use the channel-filtered path by default; see
+ * birriasdr_set_channel_filter().
  */
 int birriasdr_set_sample_rate(birriasdr_dev_t *dev, uint32_t samples_per_second);
+
+/** With CAP_CHANNEL_FILTER, choose the receive path at 20 and 40 MSps for the
+ * next read: 1, the default, takes the samples after the chip's Wi-Fi channel
+ * filter; 0 the stock taps. Measured with a carrier swept past the span edge:
+ *
+ *   rate     path       -1 dB        -3 dB        folded in at the edge / 1.2x
+ *   20 MSps  stock      +-7.7 MHz    +-9.7 MHz    -4 dB / -9 dB
+ *   20 MSps  filtered   +-7.9 MHz    +-8.3 MHz    -80 dB, -29 dB at +10 MHz / below -70 dB
+ *   40 MSps  stock      +-15.6 MHz   +-19.2 MHz   -4 dB / -9 dB
+ *   40 MSps  filtered   +-13.4 MHz   +-13.7 MHz   -41 to -48 dB / below -54 dB
+ *
+ * The filtered path arrives as both chains at 40 MSps a chain, 320 MB/s, so it
+ * is used only when the host takes bursts of 3 or more from the data endpoint
+ * (tools/flipper-one/birria_burst); without them both rates use the stock path.
+ * At 20 MSps the chip's 20 MHz channel filter sits 1.25 MHz below its LO, so the
+ * library tunes 1.25 MHz high, turns the samples back and halves them with a
+ * 27-tap half-band stage: the passband is centered on the requested frequency, the
+ * output has two more bits (full scale 32768, birriasdr_get_full_scale) and the
+ * chip's DC notch and LO leakage sit at +1.25 MHz, a dip of about 5 dB at +1.1.
+ * 10 MSps and below and 80 MSps always use the stock path. Returns UNSUPPORTED
+ * for 1 on a backend without the capability, BUSY during a read.
+ */
+int birriasdr_set_channel_filter(birriasdr_dev_t *dev, int enabled);
+
+/** The channel-filter setting, 1 or 0. */
+int birriasdr_get_channel_filter(const birriasdr_dev_t *dev);
+
+/** 1 when the next read will use the channel-filtered path: the setting is on
+ * and either two chains are set, or the rate is 20 or 40 MSps and the host bursts.
+ */
+int birriasdr_get_channel_filter_active(const birriasdr_dev_t *dev);
 
 /** Return the nominal configured complex sample rate, or 0 for NULL. */
 uint32_t birriasdr_get_sample_rate(const birriasdr_dev_t *dev);
@@ -449,6 +484,36 @@ int birriasdr_read_sync(birriasdr_dev_t *dev, int16_t *iq, uint32_t count,
 int birriasdr_read_async(birriasdr_dev_t *dev, birriasdr_read_async_cb_t callback,
                         void *context, uint32_t transfer_count,
                         uint32_t buffer_samples);
+
+/** Two-chain samples: iq[0] holds count samples of chain 0 and iq[1] of chain 1,
+ * taken at the same instants from one LO. Same rules as birriasdr_read_async_cb_t.
+ * The phase between the chains is steady within a read (measured 0.2 degrees
+ * standard deviation over 0.2 s) but differs from read to read, so direction
+ * finding needs a calibration in each read.
+ */
+typedef void (*birriasdr_read_multi_cb_t)(const int16_t *const *iq, unsigned channels,
+                                          uint32_t count, uint64_t first_sample, void *context);
+
+/** Choose the receive chains for the next read: 1 (chain 0) or 2 (chain 1) use
+ * the single-chain reads, like set_antenna; 3 captures both and needs
+ * birriasdr_read_async_multi(). UNSUPPORTED where the backend has one chain.
+ */
+int birriasdr_set_channels(birriasdr_dev_t *dev, unsigned mask);
+
+/** The chains the next read captures: 1, 2 or 3. */
+unsigned birriasdr_get_channels(const birriasdr_dev_t *dev);
+
+/** Stream both chains, set with birriasdr_set_channels(dev, 3), at 40 or 20 MSps
+ * a chain. Both use the two-chain format at 40 MSps a chain, 320 MB/s, so the
+ * host must take bursts of 3 or more (tools/flipper-one/birria_burst); 20 MSps
+ * keeps every other sample on the host, after the chip's 20 MHz channel filter
+ * (the channel-filter offset applies, as at single-chain 20 MSps). With the
+ * channel filter off the chains come from the stock taps, only filtered to the
+ * rate's profile. UNSUPPORTED for other rates or without the burst; otherwise
+ * the same contract as birriasdr_read_async().
+ */
+int birriasdr_read_async_multi(birriasdr_dev_t *dev, birriasdr_read_multi_cb_t callback,
+                               void *context, uint32_t depth, uint32_t buffer_samples);
 
 /** Request cancellation concurrently with read_async/read_sync or its callback.
  * Live gain/tuning operations are also allowed as documented above. Not async-signal-safe:

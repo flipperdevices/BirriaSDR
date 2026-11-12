@@ -15,21 +15,87 @@
 struct delivery {
     birriasdr_dev_t *dev;
     birriasdr_read_async_cb_t callback;
+    birriasdr_read_multi_cb_t multi; /* two-chain reads: chain 0 in iq, chain 1 in iq1 */
     void *context;
-    int16_t *iq;
+    int16_t *iq, *iq1;
     uint32_t capacity, used;
     uint32_t restarts;
     uint64_t delivered, segment_start;
     int staged_result;
     bool holdback, staged;
-    /* Below 10 MSps: payloads decode into native and are halved into iq once
-     * confirmed. The AGC measures them before that, so it still sees signals
-     * the filters remove, which can clip the ADC all the same. */
-    struct bs_decimator *decimator;
-    int16_t *native;
+    /* With half-band stages (below 10 MSps, and 20 MSps in the two-chain format):
+     * payloads decode into native, a chain each, and are halved into iq once
+     * confirmed. The AGC measures them before that, so it still sees signals the
+     * filters remove, which can clip the ADC all the same. */
+    struct bs_decimator *decimator, *decimator1;
+    int16_t *native, *native1;
     unsigned packets; /* packets halved; the AGC measures one in four, as at 10 MSps */
     bool probing;
+    /* The channel-filtered path with the 20 MHz filter tunes high by its offset;
+     * turn the native samples back by offset/rate cycles a sample: a whole step of
+     * a 32-point table (1 at 40 MSps), its phase kept across packets.
+     */
+    unsigned turn_step, turn_phase;
 };
+
+/* 32767 cos and sin of 2 pi k / 32. */
+static const int16_t turn_cos[32] = {
+    32767, 32137, 30273, 27245, 23170, 18204, 12539, 6393,
+    0, -6393, -12539, -18204, -23170, -27245, -30273, -32137,
+    -32767, -32137, -30273, -27245, -23170, -18204, -12539, -6393,
+    0, 6393, 12539, 18204, 23170, 27245, 30273, 32137
+};
+static const int16_t turn_sin[32] = {
+    0, 6393, 12539, 18204, 23170, 27245, 30273, 32137,
+    32767, 32137, 30273, 27245, 23170, 18204, 12539, 6393,
+    0, -6393, -12539, -18204, -23170, -27245, -30273, -32137,
+    -32767, -32137, -30273, -27245, -23170, -18204, -12539, -6393
+};
+
+static void setup_turn(struct delivery *delivery)
+{
+    const birriasdr_dev_t *dev = delivery->dev;
+    const uint32_t offset = bs_filter_offset(dev);
+    delivery->turn_step = offset ? (unsigned)((uint64_t)offset * 32 / bs_native_rate(dev)) : 0;
+    delivery->turn_phase = 0;
+}
+
+/* Multiply by exp(+j 2 pi offset n / rate): the signal at the requested center,
+ * which arrives offset below the tuned one, returns to 0 Hz. Magnitude is kept,
+ * so I or Q alone can exceed full scale by up to the square root of 2. The phase
+ * pattern repeats every 32 samples, so the table is laid out once per call from
+ * the current phase and each block of 32 runs over contiguous values, which the
+ * compiler vectorizes; packets are whole blocks.
+ */
+static void turn_samples(struct delivery *delivery, int16_t *iq, uint32_t samples)
+{
+    int32_t c[32], s[32];
+    for (unsigned k = 0; k < 32; ++k) {
+        const unsigned at = (delivery->turn_phase + k * delivery->turn_step) & 31;
+        c[k] = turn_cos[at];
+        s[k] = turn_sin[at];
+    }
+    for (uint32_t n = 0; n < samples; n += 32) {
+        int16_t *x = iq + 2 * n;
+        const uint32_t block = samples - n < 32 ? samples - n : 32;
+        for (uint32_t k = 0; k < block; ++k) {
+            const int32_t i = x[2 * k], q = x[2 * k + 1];
+            x[2 * k] = (int16_t)((i * c[k] - q * s[k] + 16384) >> 15);
+            x[2 * k + 1] = (int16_t)((i * s[k] + q * c[k] + 16384) >> 15);
+        }
+    }
+    delivery->turn_phase = (delivery->turn_phase + samples * delivery->turn_step) & 31;
+}
+
+static void reset_decimators(struct delivery *delivery)
+{
+    const unsigned stages = bs_host_halvings(delivery->dev);
+    const bool after = bs_filtered(delivery->dev); /* the chip's channel filter came first */
+    if (delivery->decimator)
+        bs_decimator_reset(delivery->decimator, stages, after);
+    if (delivery->decimator1)
+        bs_decimator_reset(delivery->decimator1, stages, after);
+}
 
 /* Deliver only complete validated samples. A short final buffer is allowed;
  * sequence offsets are complex-sample counts, independent of callback sizing.
@@ -38,30 +104,60 @@ static void flush_samples(struct delivery *delivery)
 {
     if (!delivery->used)
         return;
-    /* The automatic antenna's first comparison withholds the read's first samples. */
-    bool probing = delivery->decimator ? delivery->probing :
-                   bs_agc_measure(delivery->dev, delivery->iq, delivery->used);
-    if (probing && !delivery->delivered) {
-        delivery->used = 0;
-        return;
+    if (delivery->multi) {
+        const int16_t *chains[2] = {delivery->iq, delivery->iq1};
+        if (!delivery->decimator) {
+            bs_agc_measure(delivery->dev, delivery->iq, delivery->used);
+            bs_agc_measure(delivery->dev, delivery->iq1, delivery->used);
+        }
+        delivery->multi(chains, 2, delivery->used, delivery->delivered, delivery->context);
+    } else {
+        /* The automatic antenna's first comparison withholds the read's first samples. */
+        bool probing = delivery->decimator ? delivery->probing :
+                       bs_agc_measure(delivery->dev, delivery->iq, delivery->used);
+        if (probing && !delivery->delivered) {
+            delivery->used = 0;
+            return;
+        }
+        delivery->callback(delivery->iq, delivery->used, delivery->delivered, delivery->context);
     }
-    delivery->callback(delivery->iq, delivery->used, delivery->delivered, delivery->context);
     delivery->delivered += delivery->used;
     delivery->dev->stats.samples = delivery->delivered - delivery->segment_start;
     delivery->used = 0;
 }
 
 /* Reorder one complete raw Q,I payload into public I,Q pairs just past the
- * delivered ones, without counting them. The fixed format supplies 2048
- * samples (1024 at 10/20 MSps); callback capacity is a whole number of
- * full-rate packets, which also divides evenly at 20 MSps.
+ * delivered ones (or into native, before half-band stages), without counting
+ * them. A packet holds 2048 hardware samples, 1024 with the packer at 10 and
+ * 20 MSps and 1024 a chain in the two-chain format; callback capacity is a
+ * whole number of 2048-sample packets, so every case divides it evenly.
  */
 static int decode_payload(struct delivery *delivery, const uint8_t *raw)
 {
+    birriasdr_dev_t *dev = delivery->dev;
+    const uint32_t samples = bs_packet_samples(dev);
     int16_t *iq = delivery->decimator ? delivery->native : delivery->iq + 2u * delivery->used;
-    if (bs_packet_samples(delivery->dev) < BS_PACKET_SAMPLES)
-        return bs_decode_iq_halved(raw, iq, BS_PACKET_SAMPLES);
-    return bs_decode_iq(raw, iq, BS_PACKET_SAMPLES);
+    int result;
+    if (delivery->multi) {
+        int16_t *iq1 = delivery->decimator1 ? delivery->native1 : delivery->iq1 + 2u * delivery->used;
+        const unsigned phase = delivery->turn_phase;
+        result = bs_decode_iq_dual(raw, iq, iq1, BS_PACKET_SAMPLES);
+        if (!result && delivery->turn_step) {
+            turn_samples(delivery, iq, samples);
+            delivery->turn_phase = phase; /* both chains turn by the same phases */
+            turn_samples(delivery, iq1, samples);
+        }
+        return result;
+    }
+    if (bs_lanes(dev))
+        result = bs_decode_iq_lane(raw, iq, BS_PACKET_SAMPLES, atomic_load(&dev->lane));
+    else if (samples < BS_PACKET_SAMPLES)
+        result = bs_decode_iq_halved(raw, iq, BS_PACKET_SAMPLES);
+    else
+        result = bs_decode_iq(raw, iq, BS_PACKET_SAMPLES);
+    if (!result && delivery->turn_step)
+        turn_samples(delivery, iq, samples);
+    return result;
 }
 
 /* Count the decoded payload, or measure and halve it, and deliver once the
@@ -70,10 +166,17 @@ static void commit_payload(struct delivery *delivery)
 {
     const uint32_t samples = bs_packet_samples(delivery->dev);
     if (delivery->decimator) {
-        if (delivery->packets++ % 4 == 0)
+        if (delivery->packets++ % 4 == 0) {
             delivery->probing = bs_agc_measure(delivery->dev, delivery->native, samples);
-        delivery->used += (uint32_t)bs_decimate(delivery->decimator, delivery->native, samples,
-                                                delivery->iq + 2u * delivery->used);
+            if (delivery->multi)
+                bs_agc_measure(delivery->dev, delivery->native1, samples);
+        }
+        const uint32_t out = (uint32_t)bs_decimate(delivery->decimator, delivery->native, samples,
+                                                   delivery->iq + 2u * delivery->used);
+        if (delivery->multi)
+            bs_decimate(delivery->decimator1, delivery->native1, samples,
+                        delivery->iq1 + 2u * delivery->used);
+        delivery->used += out;
     } else {
         delivery->used += samples;
     }
@@ -133,8 +236,7 @@ static int receive_gap(void *context, uint32_t state, uint64_t packets)
     birriasdr_dev_t *dev = delivery->dev;
     delivery->staged = false;
     flush_samples(delivery);
-    if (delivery->decimator) /* the samples on either side are not continuous */
-        bs_decimator_reset(delivery->decimator, dev->decimation);
+    reset_decimators(delivery); /* the samples on either side are not continuous */
     struct birriasdr_recovery_event event = {
         .next_sample = delivery->delivered, .attempt = next_attempt(delivery),
         .error = BIRRIASDR_ERROR_OVERRUN, .previous = dev->stats
@@ -335,8 +437,7 @@ static int capture_once(struct delivery *delivery, uint32_t depth, uint32_t pack
     delivery->segment_start = delivery->delivered;
     delivery->holdback = !packets && dev->recovery_limit && dev->recovery_callback;
     delivery->staged = false;
-    if (delivery->decimator)
-        bs_decimator_reset(delivery->decimator, dev->decimation);
+    reset_decimators(delivery);
     pthread_mutex_lock(&dev->control_mutex);
     dev->control_ready = false;
     dev->control_error = 0;
@@ -439,14 +540,15 @@ static bool announce_restart(struct delivery *delivery, uint32_t attempt, int er
  * Delivered offsets remain cumulative across both kinds of discontinuity.
  */
 static int stream_pinned(birriasdr_dev_t *dev, birriasdr_read_async_cb_t callback,
-                         void *context, uint32_t depth, uint32_t buffer_samples, uint32_t packets)
+                         birriasdr_read_multi_cb_t multi, void *context, uint32_t depth,
+                         uint32_t buffer_samples, uint32_t packets)
 {
     struct delivery delivery = {0};
     uint64_t total_packets = 0, total_bytes = 0;
     uint32_t faults = 0;
     unsigned idle = BS_IDLE;
     int result = BIRRIASDR_ERROR_NO_MEMORY;
-    if (!dev || !callback)
+    if (!dev || !callback == !multi || !multi != !dev->dual)
         return BIRRIASDR_ERROR_INVALID;
     if (!depth) depth = BS_DEFAULT_DEPTH;
     if (!buffer_samples) buffer_samples = 16384;
@@ -461,14 +563,24 @@ static int stream_pinned(birriasdr_dev_t *dev, birriasdr_read_async_cb_t callbac
     dev->stream_continuous = packets == 0;
     pthread_mutex_unlock(&dev->control_mutex);
     memset(&dev->stats, 0, sizeof(dev->stats));
-    delivery = (struct delivery){.dev = dev, .callback = callback, .context = context,
-                                .capacity = buffer_samples};
+    delivery = (struct delivery){.dev = dev, .callback = callback, .multi = multi,
+                                .context = context, .capacity = buffer_samples};
+    setup_turn(&delivery);
     delivery.iq = calloc((size_t)buffer_samples * 2, sizeof(*delivery.iq));
     bool buffers = delivery.iq != NULL;
-    if (dev->decimation) {
+    if (multi) {
+        delivery.iq1 = calloc((size_t)buffer_samples * 2, sizeof(*delivery.iq1));
+        buffers = buffers && delivery.iq1;
+    }
+    if (bs_host_halvings(dev)) {
         delivery.decimator = malloc(sizeof(*delivery.decimator));
         delivery.native = malloc(2 * BS_PACKET_SAMPLES * sizeof(*delivery.native));
         buffers = buffers && delivery.decimator && delivery.native;
+        if (multi) {
+            delivery.decimator1 = malloc(sizeof(*delivery.decimator1));
+            delivery.native1 = malloc(2 * BS_PACKET_SAMPLES * sizeof(*delivery.native1));
+            buffers = buffers && delivery.decimator1 && delivery.native1;
+        }
     }
     bs_agc_start(dev);
     if (buffers) {
@@ -499,8 +611,11 @@ static int stream_pinned(birriasdr_dev_t *dev, birriasdr_read_async_cb_t callbac
     dev->stats.packets = total_packets;
     dev->stats.usb_bytes = total_bytes;
     free(delivery.iq);
+    free(delivery.iq1);
     free(delivery.decimator);
     free(delivery.native);
+    free(delivery.decimator1);
+    free(delivery.native1);
     pthread_mutex_lock(&dev->control_mutex);
     dev->stream_continuous = false;
     atomic_store(&dev->run_state, BS_IDLE);
@@ -510,12 +625,13 @@ static int stream_pinned(birriasdr_dev_t *dev, birriasdr_read_async_cb_t callbac
 
 /* The caller's thread runs the stream, so it is pinned for the stream only. */
 int bs_stream(birriasdr_dev_t *dev, birriasdr_read_async_cb_t callback,
-               void *context, uint32_t depth, uint32_t buffer_samples, uint32_t packets)
+               birriasdr_read_multi_cb_t multi, void *context, uint32_t depth,
+               uint32_t buffer_samples, uint32_t packets)
 {
     if (!dev)
         return BIRRIASDR_ERROR_INVALID;
     void *saved = bs_pin_caller(dev);
-    const int result = stream_pinned(dev, callback, context, depth, buffer_samples, packets);
+    const int result = stream_pinned(dev, callback, multi, context, depth, buffer_samples, packets);
     bs_restore_caller(saved);
     return result;
 }

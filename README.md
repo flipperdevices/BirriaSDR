@@ -79,16 +79,16 @@ For more detail, see:
 | Frequency tuning | 2156 to 2610 MHz, or 2190 to 2610 MHz on generic-ID boards, and 4500 to 6200 MHz, including live changes and band switches. Sensitivity is unverified; 5 GHz reception was checked from 5250 to 5815 MHz |
 | Tuning step | Nominally 28.61 Hz, using the full 20-bit fraction. Requests are in whole hertz with no Wi-Fi channel restriction. The physical response to fine steps is still unmeasured |
 | Sample rate | 10, 20, 40 or 80 MSps complex, and 5, 2.5, 1.25 or 0.625 MSps decimated on the host from 10 MSps with half-band filters, passband 80 percent of the span and stopband 92.8 dB down. The default is 40 MSps |
-| Sampled bandwidth | A span equal to the sample rate, with nominal analog and digital settings for that span, or a 40 MHz filter at 80 MSps and a 20 MHz one at 40 MSps. The 10 MSps rate uses the 20 MHz analog setting with a narrower digital filter. See [filter characteristics](docs/mt7921.md#filtering) for rolloff and aliasing limits |
+| Sampled bandwidth | A span equal to the sample rate, with nominal analog and digital settings for that span, or a 40 MHz filter at 80 MSps and a 20 MHz one at 40 MSps. The 10 MSps rate uses the 20 MHz analog setting with a narrower digital filter. At 20 and 40 MSps the samples come after the chip's Wi-Fi channel filter by default, when the host takes USB bursts of 3 or more: signals outside the span fold in 40 dB or more down instead of 4, with a passband of ±8.3 and ±13.7 MHz (-3 dB). See [filter characteristics](docs/mt7921.md#filtering) and the [channel-filtered path](docs/mt7921.md#channel-filtered-path) |
 | Sample resolution | Signed 14-bit I and Q, from −8192 to 8191. The decimated rates keep two more bits, from −32768 to 32767 |
-| Receive channels | One at a time, chain 0 or chain 1, each with its own antenna connector, or the stronger of the two chosen automatically |
+| Receive channels | Chain 0 or chain 1, each with its own antenna connector, or the stronger of the two chosen automatically; or both at once, sampled together from one LO, at 20 or 40 MSps a chain (`birriasdr_read_async_multi`, 320 MB/s) |
 | Transmit | None, receive only |
 | Gain | Calibrated in whole dB from a measured table: 0 to 59 dB at 2.4 GHz and 0 to 53 dB at 5 GHz, within about 1 dB on two boards and both receive chains. Raw codes for LNA 0 to 5, filter stage 0 to 13 and digital 0 to 12 stay available |
 | Live gain changes | Supported without restarting capture, with a brief settling transient |
 | Automatic gain | The library's AGC keeps the level between about -30 and -12 dBFS using the measured gain table, LNA first. Releasing the overrides to the chip instead stays available |
 | Frequency accuracy | Uncalibrated. A ppm correction for the reference crystal can be set; the sample clock keeps its error |
 | Reference clock | On-board 40 MHz crystal |
-| Host interface | Bulk transfers over USB 3.0 at about 81 MB/s at 10 MSps, 162 MB/s at 20 and 40 MSps and 325 MB/s at 80 MSps |
+| Host interface | Bulk transfers over USB 3.0 at about 81 MB/s at 10 MSps, 162 MB/s at 20 and 40 MSps and 325 MB/s at 80 MSps; 325 MB/s for the channel-filtered path and two chains |
 | Output format | Interleaved signed 16-bit I and Q (`cs16`). Buffers from the API are native-endian, and recorder files are little-endian |
 | Firmware | Original 1,664-byte RAM program. No vendor firmware and nothing flashed |
 | Host platforms | Linux, tested on a Raspberry Pi 5, and macOS, tested on an Apple Silicon Mac |

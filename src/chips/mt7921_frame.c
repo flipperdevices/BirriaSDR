@@ -201,3 +201,37 @@ int bs_decode_iq_halved(const uint8_t *raw, int16_t *iq, size_t words)
     }
     return padding || (reserved & 0xc000c000u) ? BIRRIASDR_ERROR_PROTOCOL : 0;
 }
+
+/* Channel-filtered 40 MSps records hold both chains: words 0 and 2 are chain 0
+ * at t and t+1, words 1 and 3 chain 1. Keep one lane, two samples a record, and
+ * validate every word of the packet, the other lane included.
+ */
+int bs_decode_iq_lane(const uint8_t *raw, int16_t *iq, size_t words, unsigned lane)
+{
+    uint32_t reserved = 0;
+    if (words % 4 || lane > 1)
+        return BIRRIASDR_ERROR_INVALID;
+    for (size_t n = 0; n < words; n += 4) {
+        uint32_t w[4];
+        for (unsigned k = 0; k < 4; ++k)
+            reserved |= w[k] = load_le32(raw + (n + k) * 4);
+        decode_pair(w[lane], w[lane + 2], iq + n);
+    }
+    return reserved & 0xc000c000u ? BIRRIASDR_ERROR_PROTOCOL : 0;
+}
+
+/* Both lanes, chain 0 into iq0 and chain 1 into iq1, two samples a record each. */
+int bs_decode_iq_dual(const uint8_t *raw, int16_t *iq0, int16_t *iq1, size_t words)
+{
+    uint32_t reserved = 0;
+    if (words % 4)
+        return BIRRIASDR_ERROR_INVALID;
+    for (size_t n = 0; n < words; n += 4) {
+        uint32_t w[4];
+        for (unsigned k = 0; k < 4; ++k)
+            reserved |= w[k] = load_le32(raw + (n + k) * 4);
+        decode_pair(w[0], w[2], iq0 + n);
+        decode_pair(w[1], w[3], iq1 + n);
+    }
+    return reserved & 0xc000c000u ? BIRRIASDR_ERROR_PROTOCOL : 0;
+}

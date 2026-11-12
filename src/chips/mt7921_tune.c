@@ -237,7 +237,9 @@ int mt_set_frequency(birriasdr_dev_t *dev, uint64_t frequency_hz)
     uint32_t diagnostic;
     if (!mt_frequency_supported(frequency_hz))
         return BIRRIASDR_ERROR_UNSUPPORTED;
-    BS_TRY(retune_selected(dev, bs_corrected_frequency(frequency_hz, dev->ppm),
+    /* The channel-filtered path with the 20 MHz filter tunes above the center by
+     * the filter's offset; delivery turns the samples back (stream.c). */
+    BS_TRY(retune_selected(dev, bs_corrected_frequency(frequency_hz + bs_filter_offset(dev), dev->ppm),
                            MT_RF_FRACTION_BITS, frequency_hz >= MT_RF_5G_MIN_HZ));
     BS_TRY(mt_rf_read(dev, MT_SYNTH_PORT, 0xd74, &diagnostic));
     return diagnostic == 0xfffff400 || diagnostic == 0x00000400 ?

@@ -79,6 +79,8 @@ int birriasdr_open(birriasdr_dev_t **out, uint32_t index)
         return BIRRIASDR_ERROR_NO_MEMORY;
     }
     dev->gain = (struct birriasdr_gain){1, 4, 0};
+    dev->channel_filter = true;
+    atomic_init(&dev->lane, 0);
     result = bs_usb_discover(index, NULL, dev);
     if (result < 0) {
         bs_usb_close(dev);
@@ -163,7 +165,8 @@ int birriasdr_get_tuning_band(const birriasdr_dev_t *dev, uint32_t index,
 
 /* Stage a center while idle, or synchronously retune under the same mutex as
  * gain/start/stop/reset. The backend calibrates its synthesizer; it never rounds
- * to a Wi-Fi channel or silently translates this into host-side mixing.
+ * to a Wi-Fi channel. The only host-side mixing is the documented channel-filter
+ * offset (birriasdr_set_channel_filter), which keeps the requested center at 0 Hz.
  */
 int birriasdr_set_center_freq(birriasdr_dev_t *dev, uint64_t frequency)
 {
@@ -233,6 +236,26 @@ int birriasdr_set_sample_rate(birriasdr_dev_t *dev, uint32_t rate)
     return 0;
 }
 
+/* Stored for the next read, like the rate. */
+int birriasdr_set_channel_filter(birriasdr_dev_t *dev, int enabled)
+{
+    BS_TRY(require_idle(dev));
+    if (!(dev->backend->capabilities & BIRRIASDR_CAP_CHANNEL_FILTER))
+        return enabled ? BIRRIASDR_ERROR_UNSUPPORTED : 0;
+    dev->channel_filter = enabled != 0;
+    return 0;
+}
+
+int birriasdr_get_channel_filter(const birriasdr_dev_t *dev)
+{
+    return dev && dev->channel_filter;
+}
+
+int birriasdr_get_channel_filter_active(const birriasdr_dev_t *dev)
+{
+    return dev && bs_filtered(dev);
+}
+
 /* The nominal complex rate is configuration metadata, not measured timing. */
 uint32_t birriasdr_get_sample_rate(const birriasdr_dev_t *dev)
 {
@@ -241,7 +264,7 @@ uint32_t birriasdr_get_sample_rate(const birriasdr_dev_t *dev)
 
 uint32_t birriasdr_get_full_scale(const birriasdr_dev_t *dev)
 {
-    return dev && dev->decimation ? 32768 : 8192;
+    return dev && bs_host_halvings(dev) ? 32768 : 8192;
 }
 
 /* Programmed when a read starts, like the rate. */
@@ -686,7 +709,47 @@ int birriasdr_get_stream_stats(birriasdr_dev_t *dev, struct birriasdr_stream_sta
 int birriasdr_read_async(birriasdr_dev_t *dev, birriasdr_read_async_cb_t callback,
                         void *context, uint32_t depth, uint32_t buffer_samples)
 {
-    return bs_stream(dev, callback, context, depth, buffer_samples, 0);
+    return bs_stream(dev, callback, NULL, context, depth, buffer_samples, 0);
+}
+
+/* Stored for the next read. One chain keeps the single-chain reads; both need
+ * birriasdr_read_async_multi(). */
+int birriasdr_set_channels(birriasdr_dev_t *dev, unsigned mask)
+{
+    BS_TRY(require_idle(dev));
+    if (mask < 1 || mask > 3)
+        return BIRRIASDR_ERROR_INVALID;
+    if (mask == 3 && (dev->backend->antenna_count < 2 ||
+                      !(dev->backend->capabilities & BIRRIASDR_CAP_CHANNEL_FILTER)))
+        return BIRRIASDR_ERROR_UNSUPPORTED;
+    if (mask == 3) {
+        dev->dual = true;
+        return 0;
+    }
+    if (mask == 2 && dev->backend->antenna_count < 2)
+        return BIRRIASDR_ERROR_UNSUPPORTED;
+    dev->dual = false;
+    dev->antenna_auto = false;
+    dev->antenna = (uint8_t)(mask - 1);
+    return 0;
+}
+
+unsigned birriasdr_get_channels(const birriasdr_dev_t *dev)
+{
+    if (!dev)
+        return 0;
+    return dev->dual ? 3u : 1u << dev->antenna;
+}
+
+/* Both chains need the two-chain format, 320 MB/s, so the host's burst. */
+int birriasdr_read_async_multi(birriasdr_dev_t *dev, birriasdr_read_multi_cb_t callback,
+                               void *context, uint32_t depth, uint32_t buffer_samples)
+{
+    if (!dev || !callback || !dev->dual)
+        return BIRRIASDR_ERROR_INVALID;
+    if (dev->decimation || (dev->rate != 20000000 && dev->rate != 40000000) || dev->host_burst < 3)
+        return BIRRIASDR_ERROR_UNSUPPORTED;
+    return bs_stream(dev, NULL, callback, context, depth, buffer_samples, 0);
 }
 
 struct sync_buffer { int16_t *iq; uint32_t count; uint32_t received; };
@@ -714,10 +777,10 @@ int birriasdr_read_sync(birriasdr_dev_t *dev, int16_t *iq, uint32_t count, uint3
     if (n_read)
         *n_read = 0;
     if (!dev || !iq || !n_read || !count || count % BS_PACKET_SAMPLES ||
-        count > UINT32_MAX >> dev->decimation)
+        count > UINT32_MAX >> bs_host_halvings(dev))
         return BIRRIASDR_ERROR_INVALID;
-    result = bs_stream(dev, copy_sync, &buffer, 0, 16384,
-                       (count << dev->decimation) / bs_packet_samples(dev));
+    result = bs_stream(dev, copy_sync, NULL, &buffer, 0, 16384,
+                       (count << bs_host_halvings(dev)) / bs_packet_samples(dev));
     *n_read = buffer.received;
     if (!result && buffer.received != count)
         return BIRRIASDR_ERROR_PROTOCOL;

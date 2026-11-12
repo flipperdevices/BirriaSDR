@@ -142,7 +142,7 @@ static int gain_values(const struct birriasdr_gain *gain, uint32_t values[4])
 int mt_apply_gain(birriasdr_dev_t *dev)
 {
     uint32_t before[2][4], coarse, values[4];
-    unsigned chains = dev->antenna_auto ? 3u : 1u << dev->antenna;
+    unsigned chains = dev->antenna_auto || bs_lanes(dev) ? 3u : 1u << dev->antenna;
     BS_TRY(gain_values(&dev->gain, values));
     for (unsigned chain = 0; chain < 2; ++chain) {
         if (!(chains & 1u << chain))

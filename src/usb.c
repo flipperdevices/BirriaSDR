@@ -186,7 +186,7 @@ static int find_interface(birriasdr_dev_t *dev, libusb_device *usb)
         const struct libusb_interface *interface = &config->interface[i];
         for (int a = 0; a < interface->num_altsetting; ++a) {
             const struct libusb_interface_descriptor *alt = &interface->altsetting[a];
-            uint8_t in[2] = {0}, out[6] = {0};
+            uint8_t in[2] = {0}, out[6] = {0}, burst = 0;
             unsigned ni = 0, no = 0;
             if (alt->bAlternateSetting || alt->bInterfaceClass != 0xff ||
                 alt->bInterfaceSubClass != 0xff || alt->bInterfaceProtocol != 0xff)
@@ -197,6 +197,13 @@ static int find_interface(birriasdr_dev_t *dev, libusb_device *usb)
                     continue;
                 if (ep->bEndpointAddress & LIBUSB_ENDPOINT_IN) {
                     if (ni < 2) in[ni] = ep->bEndpointAddress;
+                    /* The burst the host uses for the data endpoint: the ROM
+                     * advertises 0; tools/flipper-one/birria_burst patches it. */
+                    struct libusb_ss_endpoint_companion_descriptor *companion = NULL;
+                    if (!ni && libusb_get_ss_endpoint_companion_descriptor(NULL, ep, &companion) == 0) {
+                        burst = companion->bMaxBurst;
+                        libusb_free_ss_endpoint_companion_descriptor(companion);
+                    }
                     ++ni;
                 } else {
                     if (no < 6) out[no] = ep->bEndpointAddress;
@@ -208,6 +215,7 @@ static int find_interface(birriasdr_dev_t *dev, libusb_device *usb)
             ++matches;
             dev->interface_number = alt->bInterfaceNumber;
             dev->ep_in = in[0];
+            dev->host_burst = burst;
             dev->ep_command = out[0];
             dev->ep_download = out[1];
         }

@@ -38,11 +38,19 @@ static const float two_after[3] = { /* 11 taps, 105.7 dB */
 static const float three_after[2] = { /* 7 taps, 96.5 dB */
     2.818225965e-01f, -3.182924556e-02f,
 };
+/* The one stage after the chip's channel filter, which already keeps everything
+ * past 0.3 of the input rate 40 dB or more down: the same band edges as last,
+ * 51.2 dB, 0.05 dB ripple, at half the work. remez(27, [0, 0.2, 0.3, 0.5]). */
+static const float after_channel[7] = { /* 27 taps, 51.2 dB */
+    3.153677459e-01f, -9.755306284e-02f, 5.020501980e-02f, -2.821058868e-02f,
+    1.555949263e-02f, -7.910530616e-03f, 3.864509926e-03f,
+};
 
-void bs_decimator_reset(struct bs_decimator *decimator, unsigned stages)
+void bs_decimator_reset(struct bs_decimator *decimator, unsigned stages, bool after_channel)
 {
     memset(decimator, 0, sizeof(*decimator));
     decimator->stages = stages;
+    decimator->after_channel = after_channel;
 }
 
 /* One component of a stage: y[j] from the even samples around the odd center
@@ -64,10 +72,15 @@ static inline __attribute__((always_inline)) void fir(
 
 /* The filter for a stage with remaining stages after it. */
 static void fir_stage(float *y, const float *even, const float *odd, size_t outputs,
-                      unsigned remaining)
+                      unsigned remaining, bool after)
 {
     switch (remaining) {
-    case 0: fir(y, even, odd, outputs, last, 14); break;
+    case 0:
+        if (after)
+            fir(y, even, odd, outputs, after_channel, 7);
+        else
+            fir(y, even, odd, outputs, last, 14);
+        break;
     case 1: fir(y, even, odd, outputs, one_after, 5); break;
     case 2: fir(y, even, odd, outputs, two_after, 3); break;
     default: fir(y, even, odd, outputs, three_after, 2); break;
@@ -82,7 +95,8 @@ static void fir_stage(float *y, const float *even, const float *odd, size_t outp
 static size_t halve(struct bs_decimator *d, unsigned stage, size_t n, float *out)
 {
     const unsigned remaining = d->stages - 1 - stage;
-    const size_t side = remaining == 0 ? 14 : remaining == 1 ? 5 : remaining == 2 ? 3 : 2;
+    const size_t side = remaining == 0 ? (d->after_channel ? 7 : 14) :
+                        remaining == 1 ? 5 : remaining == 2 ? 3 : 2;
     const size_t kept = 4 * side - 2, half = (kept + n) / 2, outputs = n / 2;
     float *base = d->work + 2 * (BS_HALFBAND_HISTORY - kept);
     float *ei = d->planar[0], *eq = d->planar[1], *oi = d->planar[2], *oq = d->planar[3];
@@ -94,8 +108,8 @@ static size_t halve(struct bs_decimator *d, unsigned stage, size_t n, float *out
         oi[m] = base[4 * m + 2];
         oq[m] = base[4 * m + 3];
     }
-    fir_stage(yi, ei, oi, outputs, remaining);
-    fir_stage(yq, eq, oq, outputs, remaining);
+    fir_stage(yi, ei, oi, outputs, remaining, d->after_channel);
+    fir_stage(yq, eq, oq, outputs, remaining, d->after_channel);
     for (size_t j = 0; j < outputs; ++j) {
         out[2 * j] = yi[j];
         out[2 * j + 1] = yq[j];

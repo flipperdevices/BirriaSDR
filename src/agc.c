@@ -274,7 +274,7 @@ void bs_agc_start(birriasdr_dev_t *dev)
     dev->agc.state = (struct bs_agc_state){-1, 0, 0, 0, 0};
     atomic_store(&dev->agc.dc_restart, true);
     /* A finite read gets only the packets it asks for, so withholding would starve it. */
-    const bool probe = dev->antenna_auto && dev->stream_continuous;
+    const bool probe = dev->antenna_auto && !dev->dual && dev->stream_continuous;
     atomic_store(&dev->agc.probe_request, probe);
     atomic_store(&dev->agc.probing, probe);
     atomic_store(&dev->agc.stop, false);
