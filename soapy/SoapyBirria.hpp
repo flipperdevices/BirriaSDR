@@ -106,12 +106,16 @@ private:
     /* Samples as the library delivered them, and the time of the first. */
     struct Chunk {
         std::vector<int16_t> iq;
+        std::vector<int16_t> iq1; /* chain 1 of a two-channel stream */
         long long ns = 0;
     };
 
     static void asyncCallback(const int16_t *iq, uint32_t count, uint64_t first, void *ctx);
+    static void asyncMultiCallback(const int16_t *const *iq, unsigned channels, uint32_t count,
+                                   uint64_t first, void *ctx);
+    void convert(const int16_t *in, void *buff, size_t at, size_t n, uint32_t rate, bool dc) const;
     static void recoveryCallback(const birriasdr_recovery_event *event, void *ctx);
-    void onSamples(const int16_t *iq, uint32_t count, uint64_t first);
+    void onSamples(const int16_t *iq, const int16_t *iq1, uint32_t count, uint64_t first);
     void onGap();
     int readLocked(void *const *buffs, size_t numElems,
                    std::chrono::steady_clock::time_point deadline, bool &interrupted,
@@ -141,6 +145,7 @@ private:
     mutable std::mutex gainMutex_; /* guards gain_ across concurrent gain calls */
     birriasdr_gain gain_{2, 8, 0};
     bool streamOpen_ = false;
+    bool dual_ = false;              /* the open stream has channels 0 and 1 */
     Format format_ = Format::CF32;
     uint32_t transfers_ = 0;         /* USB transfers kept queued; zero is the library default */
     uint32_t bufferSamples_ = 16384; /* samples per library callback, the stream MTU */

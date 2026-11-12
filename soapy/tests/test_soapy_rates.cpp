@@ -212,6 +212,49 @@ int birriasdr_read_async(birriasdr_dev_t *, birriasdr_read_async_cb_t callback, 
     stub_reading = false;
     return 0;
 }
+static unsigned stub_channels = 1;
+static bool stub_channel_filter = true;
+uint32_t birriasdr_get_capabilities(const birriasdr_dev_t *) { return BIRRIASDR_CAP_CHANNEL_FILTER; }
+int birriasdr_set_channels(birriasdr_dev_t *, unsigned mask)
+{
+    if (mask < 1 || mask > 3)
+        return BIRRIASDR_ERROR_INVALID;
+    stub_channels = mask;
+    if (mask != 3) {
+        stub_antenna = mask - 1;
+        stub_antenna_auto = false;
+    }
+    return 0;
+}
+unsigned birriasdr_get_channels(const birriasdr_dev_t *) { return stub_channels; }
+int birriasdr_set_channel_filter(birriasdr_dev_t *, int enabled)
+{
+    stub_channel_filter = enabled != 0;
+    return 0;
+}
+int birriasdr_get_channel_filter(const birriasdr_dev_t *) { return stub_channel_filter; }
+/* Chain 0's samples carry I = 1 and chain 1's I = 2. */
+int birriasdr_read_async_multi(birriasdr_dev_t *, birriasdr_read_multi_cb_t callback, void *context,
+                               uint32_t, uint32_t)
+{
+    static int16_t a[2 * 1024], b[2 * 1024];
+    if (stub_channels != 3)
+        return BIRRIASDR_ERROR_INVALID;
+    ++stub_reads;
+    stub_cancel = false;
+    stub_reading = true;
+    for (unsigned i = 0; i < 1024; ++i) {
+        a[2 * i] = 1, a[2 * i + 1] = 0;
+        b[2 * i] = 2, b[2 * i + 1] = 0;
+    }
+    const int16_t *chains[2] = {a, b};
+    for (uint64_t first = 0; !stub_cancel; first += 1024) {
+        callback(chains, 2, 1024, first, context);
+        std::this_thread::sleep_for(std::chrono::microseconds(200));
+    }
+    stub_reading = false;
+    return 0;
+}
 int birriasdr_cancel_async(birriasdr_dev_t *)
 {
     if (!stub_reading)
@@ -248,6 +291,51 @@ int main()
     CHECK(stub_bandwidth == 25000000 && dev.getBandwidth(SOAPY_SDR_RX, 0) == 40e6);
     dev.setBandwidth(SOAPY_SDR_RX, 0, 0);
     CHECK(stub_bandwidth == 0);
+
+    /* Two receive chains: channel 1 alone and both together; the channel filter setting. */
+    CHECK(dev.getNumChannels(SOAPY_SDR_RX) == 2 && dev.getNumChannels(SOAPY_SDR_TX) == 0);
+    CHECK(dev.readSetting("channel_filter") == "true");
+    dev.writeSetting("channel_filter", "false");
+    CHECK(!stub_channel_filter && dev.readSetting("channel_filter") == "false");
+    dev.writeSetting("channel_filter", "maybe");
+    CHECK(!stub_channel_filter);
+    dev.writeSetting("channel_filter", "true");
+    CHECK(stub_channel_filter);
+    dev.setSampleRate(SOAPY_SDR_RX, 0, 40e6);
+    {
+        auto *pair = dev.setupStream(SOAPY_SDR_RX, SOAPY_SDR_CS16, {0, 1});
+        CHECK(stub_channels == 3 && dev.activateStream(pair) == 0);
+        static int16_t c0[2 * 512], c1[2 * 512];
+        void *buffs[] = {c0, c1};
+        int flags = 0;
+        long long time = 0;
+        int n = 0;
+        for (int tries = 0; tries < 20 && n <= 0; ++tries)
+            n = dev.readStream(pair, buffs, 512, flags, time, 100000);
+        CHECK(n > 0);
+        bool right = true;
+        for (int i = 0; i < n; ++i)
+            right = right && c0[2 * i] == 1 && c1[2 * i] == 2;
+        CHECK(right);
+        CHECK(dev.deactivateStream(pair) == 0);
+        dev.closeStream(pair);
+        auto *second = dev.setupStream(SOAPY_SDR_RX, SOAPY_SDR_CS16, {1});
+        CHECK(stub_channels == 2 && stub_antenna == 1);
+        dev.closeStream(second);
+        auto *first = dev.setupStream(SOAPY_SDR_RX, SOAPY_SDR_CS16, {0});
+        CHECK(stub_channels == 2 && stub_antenna == 1); /* channel 0 keeps the antenna setting */
+        dev.closeStream(first);
+        dev.setSampleRate(SOAPY_SDR_RX, 0, 10e6);
+        bool refused = false;
+        try {
+            dev.setupStream(SOAPY_SDR_RX, SOAPY_SDR_CS16, {0, 1});
+        } catch (const std::exception &) {
+            refused = true;
+        }
+        CHECK(refused);
+        dev.setAntenna(SOAPY_SDR_RX, 0, "RX0");
+        stub_reads = 0; /* the rate-change checks below count reads from here */
+    }
 
     const auto listed = dev.listSampleRates(SOAPY_SDR_RX, 0);
     CHECK(listed.size() == 8);
@@ -641,7 +729,7 @@ int main()
     dev.closeStream(stream);
 
     /* Settings reach the library; invalid ones do not. */
-    CHECK(dev.getSettingInfo().size() == 2);
+    CHECK(dev.getSettingInfo().size() == 3);
     dev.writeSetting("usb_burst", "3");
     CHECK(stub_burst == 3 && dev.readSetting("usb_burst") == "3");
     dev.writeSetting("usb_burst", "16");
