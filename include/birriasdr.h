@@ -69,7 +69,7 @@ struct birriasdr_device_info {
 /** Raw hardware indices, deliberately distinct from calibrated gain in dB. */
 struct birriasdr_gain {
     uint8_t lna;       /**< MT7972 range 0..5; 5 GHz needs 4..5 for full sensitivity. */
-    uint8_t lpf;       /**< Filter-stage gain 0..8; does not select bandwidth. */
+    uint8_t lpf;       /**< Filter-stage gain 0..13; does not select bandwidth. */
     uint8_t digital;   /**< Digital gain code 0..12. */
 };
 

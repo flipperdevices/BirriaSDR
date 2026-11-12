@@ -83,7 +83,7 @@ For more detail, see:
 | Sample resolution | Signed 14-bit I and Q, from −8192 to 8191. The decimated rates keep two more bits, from −32768 to 32767 |
 | Receive channels | One at a time, chain 0 or chain 1, each with its own antenna connector, or the stronger of the two chosen automatically |
 | Transmit | None, receive only |
-| Gain | Calibrated in whole dB from a measured table: 0 to 46 dB at 2.4 GHz and 0 to 40 dB at 5 GHz, within about 1 dB on two boards and both receive chains. Raw codes for LNA 0 to 5, filter stage 0 to 8 and digital 0 to 12 stay available |
+| Gain | Calibrated in whole dB from a measured table: 0 to 59 dB at 2.4 GHz and 0 to 53 dB at 5 GHz, within about 1 dB on two boards and both receive chains. Raw codes for LNA 0 to 5, filter stage 0 to 13 and digital 0 to 12 stay available |
 | Live gain changes | Supported without restarting capture, with a brief settling transient |
 | Automatic gain | The library's AGC keeps the level between about -30 and -12 dBFS using the measured gain table, LNA first. Releasing the overrides to the chip instead stays available |
 | Frequency accuracy | Uncalibrated. A ppm correction for the reference crystal can be set; the sample clock keeps its error |

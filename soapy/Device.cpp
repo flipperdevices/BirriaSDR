@@ -234,7 +234,7 @@ std::vector<std::string> SoapyBirria::listGains(const int, const size_t) const
 
 /* In dB from the measured table of the current band, as continuous ranges that
  * setGain snaps to the nearest step. Without a table, raw codes in steps of one:
- * LNA 0 to 5, LPF 0 to 8, DIG 0 to 12.
+ * LNA 0 to 5, LPF 0 to 13, DIG 0 to 12.
  */
 SoapySDR::Range SoapyBirria::getGainRange(const int, const size_t, const std::string &name) const
 {

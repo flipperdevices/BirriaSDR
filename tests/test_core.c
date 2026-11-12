@@ -372,16 +372,18 @@ static void test_tuner_gain(void)
     count = birriasdr_get_tuner_gains(&dev, NULL, 0);
     CHECK(count > 30 && count <= 64);
     CHECK(birriasdr_get_tuner_gains(&dev, gains, 64) == count);
-    CHECK(gains[0] == 0 && gains[count - 1] == 300 + 40 + 120);
+    CHECK(gains[0] == 0 && gains[count - 1] == 300 + 170 + 120);
     CHECK(birriasdr_set_tuner_gain_mode(&dev, 1) == 0 && birriasdr_set_tuner_gain(&dev, 400) == 0);
     CHECK(birriasdr_get_gain_codes(&dev, &gain, &manual) == 0);
-    CHECK(gain.lna == 5 && gain.lpf == 8 && gain.digital == 6);
+    CHECK(gain.lna == 5 && gain.lpf == 11 && gain.digital == 0);
     CHECK(birriasdr_set_tuner_gain_mode(&dev, 0) == 0);
     for (int i = 1; i < count; ++i)
         CHECK(gains[i] == gains[i - 1] + 10);
     CHECK(birriasdr_get_tuner_gains(&dev, gains, 3) == count);
     gain = bs_pick_codes(&table, 400, 1u << 0 | 1u << 6);
-    CHECK(gain.lna == 5 && gain.lpf == 8 && gain.digital == 6);
+    CHECK(gain.lna == 5 && gain.lpf == 11 && gain.digital == 0);
+    gain = bs_pick_codes(&table, 410, 1u << 0 | 1u << 6);
+    CHECK(gain.lna == 5 && gain.lpf == 11 && gain.digital == 0);
     gain = bs_pick_codes(&table, 350, 1u << 0 | 1u << 6);
     CHECK(gain.lna == 5 && gain.lpf == 8 && gain.digital == 0);
     CHECK(birriasdr_tuner_gain_codes(&dev, 210, &gain) == 0);
@@ -399,7 +401,7 @@ static void test_tuner_gain(void)
     CHECK(gain.lna == 0 && gain.lpf == 0 && gain.digital == 0);
     CHECK(birriasdr_set_tuner_gain(&dev, 1000) == 0);
     CHECK(birriasdr_get_gain_codes(&dev, &gain, &manual) == 0);
-    CHECK(gain.lna == 5 && gain.lpf == 8 && gain.digital == 12);
+    CHECK(gain.lna == 5 && gain.lpf == 13 && gain.digital == 12);
     CHECK(birriasdr_set_center_freq(&dev, UINT64_C(5785000000)) == 0);
     CHECK(birriasdr_get_gain_table(&dev, &table) == 0 && table.lna[5] == 240);
     CHECK(birriasdr_set_tuner_gain(&dev, 240) == 0);

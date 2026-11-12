@@ -154,7 +154,7 @@ int mt_status(birriasdr_dev_t *dev, uint32_t words[16])
  */
 static int validate(uint64_t frequency, uint32_t rate, const struct birriasdr_gain *gain)
 {
-    if (gain->lna > 5 || gain->lpf > 8 || gain->digital > 12)
+    if (gain->lna > 5 || gain->lpf > 13 || gain->digital > 12)
         return BIRRIASDR_ERROR_INVALID;
     if (!mt_frequency_supported(frequency) || !mt_rate_supported(rate))
         return BIRRIASDR_ERROR_UNSUPPORTED;
@@ -175,19 +175,23 @@ static int identify(birriasdr_dev_t *dev)
  * noise subtracted: chain 0 on two boards and chain 1 on one, averaged and
  * rounded to whole dB, each measurement within 1.1 dB. Filter codes 0..6
  * measured the same; the digital stage is 1 dB per code in both bands.
+ * Filter codes 9..13 were measured the same way at 2442 and 5785 MHz, on chain 0,
+ * relative to code 8: about 2 dB a code, then 5 dB more at 13, the top (14 and 15
+ * act as 13). Noise rises less than the signal up to 13, so the extra gain lowers
+ * the noise figure by about 6 dB; below 13 the converter's own noise limits it.
  */
 static const struct birriasdr_gain_table gain_2g = {
     .lna = {0, 60, 120, 210, 240, 300},
-    .lpf = {0, 0, 0, 0, 0, 0, 0, 20, 40},
+    .lpf = {0, 0, 0, 0, 0, 0, 0, 20, 40, 60, 80, 100, 120, 170},
     .digital = {0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120},
-    .lna_count = 6, .lpf_count = 9, .digital_count = 13
+    .lna_count = 6, .lpf_count = 14, .digital_count = 13
 };
 
 static const struct birriasdr_gain_table gain_5g = {
     .lna = {0, 60, 110, 130, 190, 240},
-    .lpf = {0, 0, 0, 0, 0, 0, 0, 20, 40},
+    .lpf = {0, 0, 0, 0, 0, 0, 0, 20, 40, 60, 80, 100, 120, 170},
     .digital = {0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120},
-    .lna_count = 6, .lpf_count = 9, .digital_count = 13
+    .lna_count = 6, .lpf_count = 14, .digital_count = 13
 };
 
 /* The profiles of mt7921_filter.c each rate can use. Measured on noise, the
